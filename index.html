@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timeline Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#12161d;
+    --panel:#1a2029;
+    --panel-2:#212934;
+    --line:#2b3441;
+    --text:#e7eaef;
+    --muted:#8b95a5;
+    --muted-2:#5f6c7d;
+    --accent:#4fd1c5;
+    --accent-dim:#2c5a55;
+    --warn:#e8735c;
+    --font-ui:'Space Grotesk', system-ui, sans-serif;
+    --font-mono:'JetBrains Mono', ui-monospace, monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font-ui);
+    padding:28px 20px 60px;
+    min-height:100vh;
+  }
+  .wrap{max-width:1080px;margin:0 auto;}
+  header{margin-bottom:14px;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;}
+  h1{
+    font-size:22px;
+    font-weight:600;
+    letter-spacing:-0.01em;
+    margin:0 0 4px;
+  }
+  header p{margin:0;color:var(--muted);font-size:13.5px;}
+
+  .io-bar{display:flex;gap:8px;align-items:center;}
+  .io-btn{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--muted);
+    font-family:var(--font-ui);
+    font-size:12.5px;
+    font-weight:500;
+    padding:7px 12px;
+    border-radius:7px;
+    cursor:pointer;
+  }
+  .io-btn:hover{color:var(--text);border-color:var(--accent-dim);}
+  #io-status{font-size:11.5px;color:var(--muted-2);}
+
+  .tabs{
+    display:flex;
+    gap:2px;
+    background:var(--panel-2);
+    border-radius:10px;
+    padding:3px;
+    margin:20px 0 22px;
+    width:fit-content;
+    flex-wrap:wrap;
+  }
+  .tab{
+    border:none;
+    background:transparent;
+    color:var(--muted);
+    font-family:var(--font-ui);
+    font-size:13.5px;
+    font-weight:500;
+    padding:8px 16px;
+    border-radius:7px;
+    cursor:pointer;
+    transition:background .15s, color .15s;
+  }
+  .tab.active{background:var(--accent);color:#0d1a19;}
+  .tab:not(.active):hover{color:var(--text);}
+  .tab.locked{color:var(--muted-2);cursor:not-allowed;}
+  .tab.locked:hover{color:var(--muted-2);}
+  .tab .step-num{
+    display:inline-block;width:15px;height:15px;border-radius:50%;
+    background:rgba(255,255,255,.12);color:inherit;font-size:9.5px;font-weight:600;
+    line-height:15px;text-align:center;margin-right:7px;
+  }
+  .tab.active .step-num{background:rgba(0,0,0,.2);}
+
+  .step-nav{display:flex;justify-content:flex-end;gap:10px;margin-top:16px;}
+  .next-btn{
+    background:var(--accent);border:none;color:#0d1a19;font-family:var(--font-ui);
+    font-size:13px;font-weight:600;padding:9px 16px;border-radius:8px;cursor:pointer;
+  }
+  .next-btn:hover{filter:brightness(1.08);}
+  .back-btn{
+    background:transparent;border:1px solid var(--line);color:var(--muted);
+    font-family:var(--font-ui);font-size:13px;font-weight:500;padding:9px 16px;
+    border-radius:8px;cursor:pointer;
+  }
+  .back-btn:hover{color:var(--text);}
+
+  .view{display:none;}
+  .view.active{display:block;}
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:20px 20px 18px;
+    margin-bottom:16px;
+  }
+  .panel-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:14px;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+  .panel-head h2{font-size:14px;font-weight:600;margin:0;color:var(--text);}
+  .panel-head .sub{font-size:12px;color:var(--muted-2);margin-top:2px;}
+
+  .field-row{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);}
+  .field-row input[type=text], .field-row input[type=number]{
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    color:var(--text);
+    font-family:var(--font-mono);
+    font-size:12.5px;
+    border-radius:6px;
+    padding:5px 8px;
+    width:64px;
+  }
+  .field-row input[type=text].unit{width:70px;font-family:var(--font-ui);}
+
+  /* --- ministack: readonly bar shown above the next-detail view --- */
+  .mini-label{font-size:11.5px;color:var(--muted-2);margin-bottom:6px;text-transform:none;}
+  .ministack{
+    display:flex;
+    height:26px;
+    border-radius:6px;
+    overflow:hidden;
+    border:1px solid var(--line);
+  }
+  .ministack .seg{display:flex;align-items:center;justify-content:center;font-size:10.5px;color:rgba(0,0,0,.65);font-weight:600;white-space:nowrap;overflow:hidden;}
+
+  /* --- stacked bar (high-level / detailed / optimized) --- */
+  .stackbar{
+    display:flex;
+    height:56px;
+    border-radius:8px;
+    overflow:hidden;
+    border:1px solid var(--line);
+    margin-bottom:6px;
+  }
+  .stackbar .seg{
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    position:relative;
+    min-width:2px;
+    border-right:1px solid rgba(0,0,0,.18);
+    font-size:12px;
+    font-weight:600;
+    color:rgba(0,0,0,.7);
+    text-align:center;
+    padding:0 4px;
+    overflow:hidden;
+    white-space:nowrap;
+  }
+  .stackbar .seg:last-child{border-right:none;}
+  .ticks{display:flex;font-family:var(--font-mono);font-size:10.5px;color:var(--muted-2);margin-bottom:16px;}
+  .ticks span{border-right:1px solid var(--line);padding-left:4px;flex-shrink:0;}
+  .ticks span:last-child{border-right:none;}
+
+  .total-line{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    font-size:12.5px;
+    color:var(--muted);
+    margin-bottom:14px;
+    font-family:var(--font-mono);
+  }
+  .total-line .off{color:var(--warn);}
+  .total-line .ok{color:var(--accent);}
+
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{
+    text-align:left;
+    font-size:11px;
+    color:var(--muted-2);
+    font-weight:500;
+    padding:0 8px 8px;
+    border-bottom:1px solid var(--line);
+  }
+  tbody td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr.dragging{opacity:.35;}
+  tbody tr.drag-over{box-shadow:inset 0 2px 0 var(--accent);}
+
+  .drag-handle{
+    cursor:grab;
+    color:var(--muted-2);
+    font-size:13px;
+    display:inline-block;
+    padding:2px 4px;
+    user-select:none;
+  }
+  .drag-handle:active{cursor:grabbing;}
+
+  .swatch{
+    width:22px;height:22px;border-radius:6px;border:1px solid rgba(255,255,255,.15);
+    cursor:pointer;display:block;
+  }
+  .name-input{
+    background:transparent;border:1px solid transparent;color:var(--text);
+    font-family:var(--font-ui);font-size:13px;padding:5px 7px;border-radius:6px;width:100%;
+  }
+  .name-input:hover, .name-input:focus{background:var(--panel-2);border-color:var(--line);outline:none;}
+  .num-input{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    font-family:var(--font-mono);font-size:13px;padding:5px 7px;border-radius:6px;width:68px;
+  }
+  .num-input:disabled{color:var(--muted-2);opacity:.6;}
+  .lock-cell{text-align:center;}
+  .lock-cb{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;}
+  .del-btn{
+    background:transparent;border:none;color:var(--muted-2);cursor:pointer;font-size:15px;
+    padding:4px 6px;border-radius:5px;
+  }
+  .del-btn:hover{color:var(--warn);background:rgba(232,115,92,.1);}
+
+  .add-btn{
+    background:var(--panel-2);
+    border:1px dashed var(--line);
+    color:var(--muted);
+    font-family:var(--font-ui);
+    font-size:12.5px;
+    font-weight:500;
+    padding:8px 14px;
+    border-radius:8px;
+    cursor:pointer;
+    margin-top:12px;
+  }
+  .add-btn:hover{color:var(--accent);border-color:var(--accent-dim);}
+
+  .load-btn{
+    background:transparent;
+    border:1px solid var(--line);
+    color:var(--muted);
+    font-family:var(--font-ui);
+    font-size:12px;
+    padding:6px 11px;
+    border-radius:7px;
+    cursor:pointer;
+  }
+  .load-btn:hover{color:var(--text);border-color:var(--accent-dim);}
+
+  /* --- gantt --- */
+  .gantt-scale{
+    display:flex;
+    font-family:var(--font-mono);
+    font-size:10.5px;
+    color:var(--muted-2);
+    margin:2px 0 8px 172px;
+  }
+  .gantt-scale span{border-left:1px solid var(--line);padding-left:4px;flex:1;}
+  .gantt-row{display:flex;align-items:center;height:34px;position:relative;}
+  .gantt-row-label{
+    width:172px;flex-shrink:0;font-size:12.5px;color:var(--text);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:10px;
+  }
+  .gantt-track{position:relative;flex:1;height:22px;background:var(--panel-2);border-radius:5px;}
+  .gantt-bar{
+    position:absolute;top:0;height:100%;border-radius:5px;
+    display:flex;align-items:center;padding:0 8px;font-size:11px;font-weight:600;
+    color:rgba(0,0,0,.7);white-space:nowrap;overflow:hidden;
+    box-shadow:0 0 0 1px rgba(0,0,0,.2);
+  }
+  .gantt-list{margin-top:22px;}
+
+  .footnote{font-size:11.5px;color:var(--muted-2);margin-top:2px;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Timeline Studio</h1>
+      <p>High level → detail → optimized detail → parallel execution, in one place.</p>
+    </div>
+    <div class="io-bar">
+      <button class="io-btn" id="save-btn">💾 Save</button>
+      <label class="io-btn" for="open-input" style="cursor:pointer;">📂 Open</label>
+      <input type="file" id="open-input" accept="application/json" style="display:none;">
+      <span id="io-status"></span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-view="highlevel" data-step="0"><span class="step-num">1</span>High-level</button>
+    <button class="tab locked" data-view="detailed" data-step="1"><span class="step-num">2</span>Detailed</button>
+    <button class="tab locked" data-view="optimized" data-step="2"><span class="step-num">3</span>Optimized detailed</button>
+    <button class="tab locked" data-view="gantt" data-step="3"><span class="step-num">4</span>Gantt</button>
+  </nav>
+
+  <!-- HIGH LEVEL -->
+  <section class="view active" id="view-highlevel">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>High-level timeline</h2>
+          <div class="sub">Set the overall duration, then break it into phases.</div>
+        </div>
+        <div class="field-row">
+          <span>Total</span>
+          <input type="number" id="hl-total" min="1" step="1" value="12">
+          <input type="text" id="hl-unit" class="unit" value="weeks">
+        </div>
+      </div>
+      <div id="hl-bar" class="stackbar"></div>
+      <div id="hl-ticks" class="ticks"></div>
+      <div id="hl-total-line" class="total-line"></div>
+      <table>
+        <thead><tr><th style="width:24px;"></th><th style="width:30px;"></th><th>Section</th><th style="width:90px;">Duration</th><th style="width:56px;">Keep</th><th style="width:30px;"></th></tr></thead>
+        <tbody id="hl-tbody"></tbody>
+      </table>
+      <button class="add-btn" id="hl-add">+ Add section</button>
+      <div class="footnote">Drag the ⋮⋮ handle to reorder. Check "Keep" to hold a section's duration fixed — the others absorb any change so the total stays put.</div>
+      <div class="step-nav">
+        <button class="next-btn" id="hl-next">Continue to detailed →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAILED -->
+  <section class="view" id="view-detailed">
+    <div class="panel">
+      <div class="mini-label">High-level, for reference</div>
+      <div id="det-mini" class="ministack"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Detailed timeline</h2>
+          <div class="sub">Split the same span into finer-grained sections.</div>
+        </div>
+        <div class="field-row">
+          <span>Total</span>
+          <input type="number" id="det-total" min="1" step="0.1" value="12">
+          <input type="text" id="det-unit" class="unit" value="weeks">
+        </div>
+      </div>
+      <div id="det-bar" class="stackbar"></div>
+      <div id="det-ticks" class="ticks"></div>
+      <div id="det-total-line" class="total-line"></div>
+      <table>
+        <thead><tr><th style="width:24px;"></th><th style="width:30px;"></th><th>Section</th><th style="width:90px;">Duration</th><th style="width:56px;">Keep</th><th style="width:30px;"></th></tr></thead>
+        <tbody id="det-tbody"></tbody>
+      </table>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="add-btn" id="det-add">+ Add section</button>
+        <button class="load-btn" id="det-load">Load sections from high-level</button>
+      </div>
+      <div class="footnote">Drag the ⋮⋮ handle to reorder sections. Durations now step in tenths, not whole numbers.</div>
+      <div class="step-nav">
+        <button class="back-btn" id="det-back">← Back to high-level</button>
+        <button class="next-btn" id="det-next">Continue to optimized detailed →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- OPTIMIZED DETAILED -->
+  <section class="view" id="view-optimized">
+    <div class="panel">
+      <div class="mini-label">Detailed, for reference</div>
+      <div id="opt-mini" class="ministack"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Optimized detailed timeline</h2>
+          <div class="sub">Fine-tune sequencing and durations once more before execution.</div>
+        </div>
+        <div class="field-row">
+          <span>Total</span>
+          <input type="number" id="opt-total" min="1" step="0.1" value="12">
+          <input type="text" id="opt-unit" class="unit" value="weeks">
+        </div>
+      </div>
+      <div id="opt-bar" class="stackbar"></div>
+      <div id="opt-ticks" class="ticks"></div>
+      <div id="opt-total-line" class="total-line"></div>
+      <table>
+        <thead><tr><th style="width:24px;"></th><th style="width:30px;"></th><th>Section</th><th style="width:90px;">Duration</th><th style="width:56px;">Keep</th><th style="width:30px;"></th></tr></thead>
+        <tbody id="opt-tbody"></tbody>
+      </table>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="add-btn" id="opt-add">+ Add section</button>
+        <button class="load-btn" id="opt-load">Load sections from detailed</button>
+      </div>
+      <div class="footnote">Drag the ⋮⋮ handle to reorder sections. Durations step in tenths, not whole numbers.</div>
+      <div class="step-nav">
+        <button class="back-btn" id="opt-back">← Back to detailed</button>
+        <button class="next-btn" id="opt-next">Continue to Gantt →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- GANTT -->
+  <section class="view" id="view-gantt">
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Parallel implementation (Gantt)</h2>
+          <div class="sub">Each task gets its own row, named after the task — overlaps in time simply show side by side.</div>
+        </div>
+        <div class="field-row">
+          <span>Unit</span>
+          <input type="text" id="g-unit" class="unit" value="weeks">
+        </div>
+      </div>
+      <div id="g-scale" class="gantt-scale"></div>
+      <div id="g-rows"></div>
+      <div class="gantt-list">
+        <table>
+          <thead><tr><th style="width:24px;"></th><th style="width:30px;"></th><th>Task</th><th style="width:78px;">Start</th><th style="width:78px;">Duration</th><th style="width:30px;"></th></tr></thead>
+          <tbody id="g-tbody"></tbody>
+        </table>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <button class="add-btn" id="g-add">+ Add task</button>
+          <button class="load-btn" id="g-load-det">Load from detailed</button>
+          <button class="load-btn" id="g-load-opt">Load from optimized detailed</button>
+        </div>
+        <div class="footnote">Drag the ⋮⋮ handle to reorder rows. Loading from a timeline replaces the current tasks, using each section's name and duration.</div>
+      </div>
+      <div class="step-nav">
+        <button class="back-btn" id="g-back">← Back to optimized detailed</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+const PALETTE = ['#4fd1c5','#e8735c','#e8b84f','#9b8cf2','#5b9bd5','#6fcf7a','#e87ca0','#c9a15a','#7ea8e8','#d16fd1'];
+let paletteIdx = 0;
+function nextColor(){ const c = PALETTE[paletteIdx % PALETTE.length]; paletteIdx++; return c; }
+function uid(){ return Math.random().toString(36).slice(2,9); }
+
+function makeSection(name, duration, color, locked=false){
+  return { id: uid(), name, duration, color: color || nextColor(), locked };
+}
+
+// ---------- state ----------
+let hl = {
+  total: 12,
+  unit: 'weeks',
+  sections: [
+    makeSection('Discovery', 2),
+    makeSection('Build', 6),
+    makeSection('Launch', 4)
+  ]
+};
+
+let det = { total: 12, unit: 'weeks', sections: [] };
+let opt = { total: 12, unit: 'weeks', sections: [] };
+
+let gantt = {
+  unit: 'weeks',
+  tasks: [
+    { id: uid(), name:'Research', start:0, duration:2, color: PALETTE[0] },
+    { id: uid(), name:'Design', start:1, duration:3, color: PALETTE[3] },
+    { id: uid(), name:'Build', start:3, duration:5, color: PALETTE[4] },
+    { id: uid(), name:'QA', start:7, duration:2, color: PALETTE[5] },
+    { id: uid(), name:'Marketing prep', start:2, duration:6, color: PALETTE[2] }
+  ]
+};
+
+// ---------- stepper ----------
+const STEP_VIEWS = ['highlevel','detailed','optimized','gantt'];
+let maxStepReached = 0;
+let currentStep = 0;
+
+function goToStep(step){
+  currentStep = step;
+  document.querySelectorAll('.tab').forEach(b=>{
+    const s = parseInt(b.dataset.step,10);
+    b.classList.toggle('active', s===step);
+    b.classList.toggle('locked', s>maxStepReached);
+  });
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+STEP_VIEWS[step]).classList.add('active');
+}
+
+document.querySelectorAll('.tab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const s = parseInt(btn.dataset.step,10);
+    if (s > maxStepReached) return;
+    goToStep(s);
+  });
+});
+
+document.getElementById('hl-next').addEventListener('click', ()=>{
+  maxStepReached = Math.max(maxStepReached, 1);
+  goToStep(1);
+});
+document.getElementById('det-back').addEventListener('click', ()=> goToStep(0));
+document.getElementById('det-next').addEventListener('click', ()=>{
+  maxStepReached = Math.max(maxStepReached, 2);
+  goToStep(2);
+});
+document.getElementById('opt-back').addEventListener('click', ()=> goToStep(1));
+document.getElementById('opt-next').addEventListener('click', ()=>{
+  maxStepReached = Math.max(maxStepReached, 3);
+  goToStep(3);
+});
+document.getElementById('g-back').addEventListener('click', ()=> goToStep(2));
+
+// ---------- drag & drop reordering (shared by all row-based tables) ----------
+let dragCtx = { id: null, arr: null, onChange: null };
+
+function enableRowDrag(tr, id, arr, onChange){
+  tr.addEventListener('dragover', e=>{ e.preventDefault(); tr.classList.add('drag-over'); });
+  tr.addEventListener('dragleave', ()=> tr.classList.remove('drag-over'));
+  tr.addEventListener('drop', e=>{
+    e.preventDefault();
+    tr.classList.remove('drag-over');
+    if (dragCtx.id===null || dragCtx.arr!==arr) return;
+    const fromIdx = arr.findIndex(x=>x.id===dragCtx.id);
+    const toIdx = arr.findIndex(x=>x.id===id);
+    if (fromIdx<0 || toIdx<0 || fromIdx===toIdx) return;
+    const [moved] = arr.splice(fromIdx,1);
+    arr.splice(toIdx,0,moved);
+    dragCtx.onChange();
+  });
+}
+
+function makeDragHandle(id, arr, onChange, tr){
+  const handle = document.createElement('span');
+  handle.className = 'drag-handle';
+  handle.textContent = '⋮⋮';
+  handle.draggable = true;
+  handle.addEventListener('dragstart', e=>{
+    dragCtx = { id, arr, onChange };
+    tr.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  handle.addEventListener('dragend', ()=>{
+    tr.classList.remove('dragging');
+    dragCtx = { id:null, arr:null, onChange:null };
+  });
+  return handle;
+}
+
+// ---------- rebalance logic ----------
+function rebalance(state, excludeId){
+  const current = state.sections.reduce((s,x)=>s+x.duration,0);
+  let diff = state.total - current;
+  if (Math.abs(diff) < 1e-9) return;
+
+  let pool = state.sections.filter(s=> s.id!==excludeId && !s.locked);
+  if (pool.length === 0) return;
+
+  let remaining = diff;
+  let guard = 0;
+  while (Math.abs(remaining) > 1e-9 && pool.length > 0 && guard < 20){
+    guard++;
+    const poolSum = pool.reduce((s,x)=>s+x.duration,0);
+    let nextPool = [];
+    if (poolSum <= 1e-9){
+      const share = remaining / pool.length;
+      pool.forEach(s=>{ s.duration = Math.max(0, s.duration + share); });
+      remaining = 0;
+      break;
+    }
+    let leftover = 0;
+    pool.forEach(s=>{
+      const share = remaining * (s.duration / poolSum);
+      const newVal = s.duration + share;
+      if (newVal < 0){ leftover += newVal; s.duration = 0; }
+      else { s.duration = newVal; nextPool.push(s); }
+    });
+    remaining = leftover;
+    pool = nextPool;
+  }
+}
+
+function fmt(n){
+  return (Math.round(n*100)/100).toString();
+}
+
+// ---------- render: stacked bar timelines (high-level / detailed / optimized) ----------
+function renderStack(state, barEl, ticksEl, totalLineEl, tbodyEl, onChange, durStep){
+  barEl.innerHTML = '';
+  state.sections.forEach(sec=>{
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    seg.style.flex = (Math.max(sec.duration,0.0001)) + ' 0 0px';
+    seg.style.background = sec.color;
+    seg.title = sec.name + ' — ' + fmt(sec.duration) + ' ' + state.unit;
+    seg.textContent = sec.name;
+    barEl.appendChild(seg);
+  });
+
+  ticksEl.innerHTML = '';
+  let running = 0;
+  state.sections.forEach(sec=>{
+    const t = document.createElement('span');
+    t.style.flex = (Math.max(sec.duration,0.0001)) + ' 0 0px';
+    t.textContent = fmt(running);
+    ticksEl.appendChild(t);
+    running += sec.duration;
+  });
+  const last = document.createElement('span');
+  last.style.flex = '0 0 auto';
+  last.style.borderLeft = '1px solid var(--line)';
+  last.textContent = fmt(running);
+  ticksEl.appendChild(last);
+
+  const sum = state.sections.reduce((s,x)=>s+x.duration,0);
+  const match = Math.abs(sum - state.total) < 1e-6;
+  totalLineEl.innerHTML = '<span>Sections sum to <strong>' + fmt(sum) + '</strong> ' + state.unit + '</span>' +
+    (match ? '<span class="ok">= target (' + fmt(state.total) + ')</span>'
+           : '<span class="off">target is ' + fmt(state.total) + ' — add an unlocked section or raise the total</span>');
+
+  tbodyEl.innerHTML = '';
+  state.sections.forEach(sec=>{
+    const tr = document.createElement('tr');
+    enableRowDrag(tr, sec.id, state.sections, onChange);
+
+    const tdHandle = document.createElement('td');
+    tdHandle.appendChild(makeDragHandle(sec.id, state.sections, onChange, tr));
+
+    const tdColor = document.createElement('td');
+    const sw = document.createElement('button');
+    sw.className = 'swatch';
+    sw.style.background = sec.color;
+    sw.addEventListener('click', ()=>{ sec.color = nextColor(); onChange(); });
+    tdColor.appendChild(sw);
+
+    const tdName = document.createElement('td');
+    const nameInput = document.createElement('input');
+    nameInput.className = 'name-input';
+    nameInput.type = 'text';
+    nameInput.value = sec.name;
+    nameInput.addEventListener('input', ()=>{ sec.name = nameInput.value; renderStackLight(); });
+    tdName.appendChild(nameInput);
+
+    const tdDur = document.createElement('td');
+    const durInput = document.createElement('input');
+    durInput.className = 'num-input';
+    durInput.type = 'number';
+    durInput.min = '0';
+    durInput.step = durStep;
+    durInput.value = fmt(sec.duration);
+    durInput.disabled = sec.locked;
+    durInput.addEventListener('change', ()=>{
+      let v = parseFloat(durInput.value);
+      if (isNaN(v) || v < 0) v = 0;
+      sec.duration = v;
+      rebalance(state, sec.id);
+      onChange();
+    });
+    tdDur.appendChild(durInput);
+
+    const tdLock = document.createElement('td');
+    tdLock.className = 'lock-cell';
+    const lockCb = document.createElement('input');
+    lockCb.type = 'checkbox';
+    lockCb.className = 'lock-cb';
+    lockCb.checked = sec.locked;
+    lockCb.addEventListener('change', ()=>{ sec.locked = lockCb.checked; onChange(); });
+    tdLock.appendChild(lockCb);
+
+    const tdDel = document.createElement('td');
+    const delBtn = document.createElement('button');
+    delBtn.className = 'del-btn';
+    delBtn.textContent = '✕';
+    delBtn.addEventListener('click', ()=>{
+      state.sections = state.sections.filter(s=>s.id!==sec.id);
+      rebalance(state, null);
+      onChange();
+    });
+    tdDel.appendChild(delBtn);
+
+    tr.append(tdHandle, tdColor, tdName, tdDur, tdLock, tdDel);
+    tbodyEl.appendChild(tr);
+  });
+
+  function renderStackLight(){
+    barEl.querySelectorAll('.seg').forEach((seg,i)=>{ seg.textContent = state.sections[i].name; });
+  }
+}
+
+function renderMini(sourceState, mountEl){
+  mountEl.innerHTML = '';
+  sourceState.sections.forEach(sec=>{
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    seg.style.flex = (Math.max(sec.duration,0.0001)) + ' 0 0px';
+    seg.style.background = sec.color;
+    seg.title = sec.name + ' — ' + fmt(sec.duration) + ' ' + sourceState.unit;
+    seg.textContent = sec.name;
+    mountEl.appendChild(seg);
+  });
+}
+
+function renderHL(){
+  hl.total = parseFloat(document.getElementById('hl-total').value) || hl.total;
+  hl.unit = document.getElementById('hl-unit').value || hl.unit;
+  renderStack(hl,
+    document.getElementById('hl-bar'),
+    document.getElementById('hl-ticks'),
+    document.getElementById('hl-total-line'),
+    document.getElementById('hl-tbody'),
+    renderHL,
+    '1'
+  );
+  renderMini(hl, document.getElementById('det-mini'));
+}
+
+function renderDet(){
+  det.total = parseFloat(document.getElementById('det-total').value) || det.total;
+  det.unit = document.getElementById('det-unit').value || det.unit;
+  renderStack(det,
+    document.getElementById('det-bar'),
+    document.getElementById('det-ticks'),
+    document.getElementById('det-total-line'),
+    document.getElementById('det-tbody'),
+    renderDet,
+    '0.1'
+  );
+  renderMini(det, document.getElementById('opt-mini'));
+}
+
+function renderOpt(){
+  opt.total = parseFloat(document.getElementById('opt-total').value) || opt.total;
+  opt.unit = document.getElementById('opt-unit').value || opt.unit;
+  renderStack(opt,
+    document.getElementById('opt-bar'),
+    document.getElementById('opt-ticks'),
+    document.getElementById('opt-total-line'),
+    document.getElementById('opt-tbody'),
+    renderOpt,
+    '0.1'
+  );
+}
+
+document.getElementById('hl-total').addEventListener('change', ()=>{
+  hl.total = parseFloat(document.getElementById('hl-total').value) || hl.total;
+  rebalance(hl, null);
+  renderHL();
+});
+document.getElementById('hl-unit').addEventListener('input', renderHL);
+document.getElementById('hl-add').addEventListener('click', ()=>{
+  const remaining = Math.max(hl.total - hl.sections.reduce((s,x)=>s+x.duration,0), 1);
+  const start = Math.min(remaining, Math.max(1, hl.total/6));
+  hl.sections.push(makeSection('New section', 0));
+  const added = hl.sections[hl.sections.length-1];
+  added.duration = start;
+  rebalance(hl, added.id);
+  renderHL();
+});
+
+document.getElementById('det-total').addEventListener('change', ()=>{
+  det.total = parseFloat(document.getElementById('det-total').value) || det.total;
+  rebalance(det, null);
+  renderDet();
+});
+document.getElementById('det-unit').addEventListener('input', renderDet);
+document.getElementById('det-add').addEventListener('click', ()=>{
+  det.sections.push(makeSection('New section', 0));
+  const added = det.sections[det.sections.length-1];
+  added.duration = Math.max(0.5, det.total/8);
+  rebalance(det, added.id);
+  renderDet();
+});
+document.getElementById('det-load').addEventListener('click', ()=>{
+  det.total = hl.total;
+  det.unit = hl.unit;
+  document.getElementById('det-total').value = det.total;
+  document.getElementById('det-unit').value = det.unit;
+  det.sections = hl.sections.map(s=> makeSection(s.name, s.duration, s.color, s.locked));
+  renderDet();
+});
+
+document.getElementById('opt-total').addEventListener('change', ()=>{
+  opt.total = parseFloat(document.getElementById('opt-total').value) || opt.total;
+  rebalance(opt, null);
+  renderOpt();
+});
+document.getElementById('opt-unit').addEventListener('input', renderOpt);
+document.getElementById('opt-add').addEventListener('click', ()=>{
+  opt.sections.push(makeSection('New section', 0));
+  const added = opt.sections[opt.sections.length-1];
+  added.duration = Math.max(0.5, opt.total/8);
+  rebalance(opt, added.id);
+  renderOpt();
+});
+document.getElementById('opt-load').addEventListener('click', ()=>{
+  opt.total = det.total;
+  opt.unit = det.unit;
+  document.getElementById('opt-total').value = opt.total;
+  document.getElementById('opt-unit').value = opt.unit;
+  opt.sections = det.sections.map(s=> makeSection(s.name, s.duration, s.color, s.locked));
+  renderOpt();
+});
+
+// ---------- gantt: one row per task, row label = task name ----------
+function ganttTotal(){
+  if (gantt.tasks.length===0) return 1;
+  return Math.max(...gantt.tasks.map(t=>t.start+t.duration), 1);
+}
+
+function renderGantt(){
+  gantt.unit = document.getElementById('g-unit').value || gantt.unit;
+  const total = ganttTotal();
+
+  const scaleEl = document.getElementById('g-scale');
+  scaleEl.innerHTML = '';
+  const steps = 6;
+  for (let i=0;i<=steps;i++){
+    const s = document.createElement('span');
+    s.textContent = fmt(total*i/steps);
+    scaleEl.appendChild(s);
+  }
+
+  const rowsEl = document.getElementById('g-rows');
+  rowsEl.innerHTML = '';
+  gantt.tasks.forEach(t=>{
+    const row = document.createElement('div');
+    row.className = 'gantt-row';
+    const label = document.createElement('div');
+    label.className = 'gantt-row-label';
+    label.textContent = t.name || 'Untitled';
+    const track = document.createElement('div');
+    track.className = 'gantt-track';
+    const bar = document.createElement('div');
+    bar.className = 'gantt-bar';
+    bar.style.left = (t.start/total*100) + '%';
+    bar.style.width = Math.max(t.duration/total*100, 1.5) + '%';
+    bar.style.background = t.color;
+    bar.textContent = t.name;
+    bar.title = t.name + ': ' + fmt(t.start) + '–' + fmt(t.start+t.duration) + ' ' + gantt.unit;
+    track.appendChild(bar);
+    row.append(label, track);
+    rowsEl.appendChild(row);
+  });
+
+  const tbody = document.getElementById('g-tbody');
+  tbody.innerHTML = '';
+  gantt.tasks.forEach(t=>{
+    const tr = document.createElement('tr');
+    enableRowDrag(tr, t.id, gantt.tasks, renderGantt);
+
+    const tdHandle = document.createElement('td');
+    tdHandle.appendChild(makeDragHandle(t.id, gantt.tasks, renderGantt, tr));
+
+    const tdColor = document.createElement('td');
+    const sw = document.createElement('button');
+    sw.className = 'swatch';
+    sw.style.background = t.color;
+    sw.addEventListener('click', ()=>{ t.color = nextColor(); renderGantt(); });
+    tdColor.appendChild(sw);
+
+    const tdName = document.createElement('td');
+    const nameInput = document.createElement('input');
+    nameInput.className = 'name-input';
+    nameInput.type = 'text';
+    nameInput.value = t.name;
+    nameInput.addEventListener('input', ()=>{ t.name = nameInput.value; renderGantt(); });
+    tdName.appendChild(nameInput);
+
+    const tdStart = document.createElement('td');
+    const startInput = document.createElement('input');
+    startInput.className = 'num-input';
+    startInput.type = 'number';
+    startInput.min = '0';
+    startInput.step = '0.1';
+    startInput.value = fmt(t.start);
+    startInput.addEventListener('change', ()=>{
+      let v = parseFloat(startInput.value);
+      if (isNaN(v) || v<0) v = 0;
+      t.start = v;
+      renderGantt();
+    });
+    tdStart.appendChild(startInput);
+
+    const tdDur = document.createElement('td');
+    const durInput = document.createElement('input');
+    durInput.className = 'num-input';
+    durInput.type = 'number';
+    durInput.min = '0.1';
+    durInput.step = '0.1';
+    durInput.value = fmt(t.duration);
+    durInput.addEventListener('change', ()=>{
+      let v = parseFloat(durInput.value);
+      if (isNaN(v) || v<=0) v = 0.1;
+      t.duration = v;
+      renderGantt();
+    });
+    tdDur.appendChild(durInput);
+
+    const tdDel = document.createElement('td');
+    const delBtn = document.createElement('button');
+    delBtn.className = 'del-btn';
+    delBtn.textContent = '✕';
+    delBtn.addEventListener('click', ()=>{
+      gantt.tasks = gantt.tasks.filter(x=>x.id!==t.id);
+      renderGantt();
+    });
+    tdDel.appendChild(delBtn);
+
+    tr.append(tdHandle, tdColor, tdName, tdStart, tdDur, tdDel);
+    tbody.appendChild(tr);
+  });
+}
+
+function loadIntoGantt(source){
+  let running = 0;
+  gantt.tasks = source.sections.map(s=>{
+    const t = { id: uid(), name: s.name, start: running, duration: Math.max(s.duration,0.1), color: s.color };
+    running += s.duration;
+    return t;
+  });
+  gantt.unit = source.unit;
+  document.getElementById('g-unit').value = gantt.unit;
+  renderGantt();
+}
+
+document.getElementById('g-unit').addEventListener('input', renderGantt);
+document.getElementById('g-add').addEventListener('click', ()=>{
+  const total = ganttTotal();
+  gantt.tasks.push({ id: uid(), name:'New task', start: 0, duration: Math.max(1,total/6), color: nextColor() });
+  renderGantt();
+});
+document.getElementById('g-load-det').addEventListener('click', ()=> loadIntoGantt(det));
+document.getElementById('g-load-opt').addEventListener('click', ()=> loadIntoGantt(opt));
+
+// ---------- save / open ----------
+function collectState(){
+  return {
+    version: 1,
+    maxStepReached,
+    hl: JSON.parse(JSON.stringify(hl)),
+    det: JSON.parse(JSON.stringify(det)),
+    opt: JSON.parse(JSON.stringify(opt)),
+    gantt: JSON.parse(JSON.stringify(gantt))
+  };
+}
+
+document.getElementById('save-btn').addEventListener('click', ()=>{
+  const data = collectState();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'timeline-studio-' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  const status = document.getElementById('io-status');
+  status.textContent = 'Saved';
+  setTimeout(()=>{ if (status.textContent==='Saved') status.textContent=''; }, 2500);
+});
+
+document.getElementById('open-input').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try{
+      const data = JSON.parse(reader.result);
+      hl = data.hl; det = data.det; opt = data.opt; gantt = data.gantt;
+      maxStepReached = data.maxStepReached || 0;
+      document.getElementById('hl-total').value = hl.total;
+      document.getElementById('hl-unit').value = hl.unit;
+      document.getElementById('det-total').value = det.total;
+      document.getElementById('det-unit').value = det.unit;
+      document.getElementById('opt-total').value = opt.total;
+      document.getElementById('opt-unit').value = opt.unit;
+      document.getElementById('g-unit').value = gantt.unit;
+      renderHL(); renderDet(); renderOpt(); renderGantt();
+      goToStep(currentStep);
+      const status = document.getElementById('io-status');
+      status.textContent = 'Loaded ' + file.name;
+      setTimeout(()=>{ status.textContent=''; }, 3000);
+    } catch(err){
+      alert('Could not read that file — is it a Timeline Studio save?');
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+// ---------- init ----------
+renderHL();
+renderDet();
+renderOpt();
+renderGantt();
+</script>
+</body>
+</html>
