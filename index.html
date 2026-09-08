@@ -487,7 +487,7 @@
       <div id="g-total-line" class="total-line" style="margin-top:8px;"></div>
       <div class="gantt-list">
         <table>
-          <thead><tr><th style="width:24px;"></th><th style="width:30px;"></th><th>Task</th><th style="width:78px;">Start</th><th style="width:78px;">Duration</th><th style="width:30px;"></th></tr></thead>
+          <thead><tr><th style="width:24px;"></th><th style="width:30px;"></th><th>Task</th><th style="width:78px;">Start</th><th style="width:78px;">Duration</th><th style="width:56px;">Keep</th><th style="width:30px;"></th></tr></thead>
           <tbody id="g-tbody"></tbody>
         </table>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
@@ -495,7 +495,7 @@
           <button class="load-btn" id="g-load-det">Load from detailed</button>
           <button class="load-btn" id="g-load-opt">Load from optimized detailed</button>
         </div>
-        <div class="footnote">Drag the ⋮⋮ handle to reorder rows. Loading from a timeline replaces the current tasks, using each section's name and duration.</div>
+        <div class="footnote">Drag the ⋮⋮ handle to reorder rows. Check "Keep" to hold a task's duration fixed — the other unlocked tasks absorb any change so the total stays put. Loading from a timeline replaces the current tasks, using each section's name, duration and lock state.</div>
       </div>
       <div class="step-nav">
         <button class="back-btn" id="g-back">← Back to optimized detailed</button>
@@ -589,11 +589,11 @@ let gantt = {
   unit: 'h',
   shift: 1,
   tasks: [
-    { id: uid(), name:'Preparation', start:0, duration:1.5, color: PALETTE[0] },
-    { id: uid(), name:'Production', start:1.5, duration:4, color: PALETTE[4] },
-    { id: uid(), name:'In-process QC', start:2, duration:2.5, color: PALETTE[5] },
-    { id: uid(), name:'Post-production activities', start:5.5, duration:2, color: PALETTE[1] },
-    { id: uid(), name:'Release testing', start:5.5, duration:1.5, color: PALETTE[6] }
+    { id: uid(), name:'Preparation', start:0, duration:1, color: PALETTE[0], locked:false },
+    { id: uid(), name:'Production', start:1, duration:3, color: PALETTE[4], locked:false },
+    { id: uid(), name:'In-process QC', start:1.5, duration:1.5, color: PALETTE[5], locked:false },
+    { id: uid(), name:'Post-production activities', start:4, duration:1.5, color: PALETTE[1], locked:false },
+    { id: uid(), name:'Release testing', start:4.5, duration:1, color: PALETTE[6], locked:false }
   ]
 };
 
@@ -665,6 +665,7 @@ function wireShiftGroupGantt(groupId){
       gantt.unit = 'h';
       document.getElementById('g-total').value = gantt.total;
       document.getElementById('g-unit').value = gantt.unit;
+      rebalanceArray(gantt.tasks, gantt.total, null);
       renderGantt();
     });
   });
@@ -707,12 +708,12 @@ function makeDragHandle(id, arr, onChange, tr){
 }
 
 // ---------- rebalance logic ----------
-function rebalance(state, excludeId){
-  const current = state.sections.reduce((s,x)=>s+x.duration,0);
-  let diff = state.total - current;
+function rebalanceArray(arr, total, excludeId){
+  const current = arr.reduce((s,x)=>s+x.duration,0);
+  let diff = total - current;
   if (Math.abs(diff) < 1e-9) return;
 
-  let pool = state.sections.filter(s=> s.id!==excludeId && !s.locked);
+  let pool = arr.filter(s=> s.id!==excludeId && !s.locked);
   if (pool.length === 0) return;
 
   let remaining = diff;
@@ -737,6 +738,9 @@ function rebalance(state, excludeId){
     remaining = leftover;
     pool = nextPool;
   }
+}
+function rebalance(state, excludeId){
+  rebalanceArray(state.sections, state.total, excludeId);
 }
 
 function fmt(n){
@@ -962,20 +966,19 @@ document.getElementById('opt-load').addEventListener('click', ()=>{
 
 // ---------- gantt ----------
 function ganttTotal(){
-  const taskMax = gantt.tasks.length ? Math.max(...gantt.tasks.map(t=>t.start+t.duration)) : 0;
-  return Math.max(gantt.total || 0.1, taskMax, 0.1);
+  return Math.max(gantt.total || 0.1, 0.1);
 }
 
 function renderGantt(){
   gantt.unit = document.getElementById('g-unit').value || gantt.unit;
   gantt.total = parseFloat(document.getElementById('g-total').value) || gantt.total;
   const total = ganttTotal();
-  const taskMax = gantt.tasks.length ? Math.max(...gantt.tasks.map(t=>t.start+t.duration)) : 0;
+  const durSum = gantt.tasks.reduce((s,x)=>s+x.duration,0);
   const totalLineEl = document.getElementById('g-total-line');
-  const overflow = taskMax > gantt.total + 1e-9;
-  totalLineEl.innerHTML = '<span>Target total: <strong>' + fmt(gantt.total) + '</strong> ' + gantt.unit + '</span>' +
-    (overflow ? '<span class="off">tasks run to ' + fmt(taskMax) + ' ' + gantt.unit + ' — beyond the target</span>'
-               : '<span class="ok">tasks fit within target</span>');
+  const match = Math.abs(durSum - gantt.total) < 1e-6;
+  totalLineEl.innerHTML = '<span>Task durations sum to <strong>' + fmt(durSum) + '</strong> ' + gantt.unit + '</span>' +
+    (match ? '<span class="ok">= target (' + fmt(gantt.total) + ')</span>'
+           : '<span class="off">target is ' + fmt(gantt.total) + ' — add an unlocked task or raise the total</span>');
 
   const scaleEl = document.getElementById('g-scale');
   scaleEl.innerHTML = '';
@@ -1051,16 +1054,27 @@ function renderGantt(){
     const durInput = document.createElement('input');
     durInput.className = 'num-input';
     durInput.type = 'number';
-    durInput.min = '0.1';
+    durInput.min = '0';
     durInput.step = '0.1';
     durInput.value = fmt(t.duration);
+    durInput.disabled = t.locked;
     durInput.addEventListener('change', ()=>{
       let v = parseFloat(durInput.value);
-      if (isNaN(v) || v<=0) v = 0.1;
+      if (isNaN(v) || v<0) v = 0;
       t.duration = v;
+      rebalanceArray(gantt.tasks, gantt.total, t.id);
       renderGantt();
     });
     tdDur.appendChild(durInput);
+
+    const tdLock = document.createElement('td');
+    tdLock.className = 'lock-cell';
+    const lockCb = document.createElement('input');
+    lockCb.type = 'checkbox';
+    lockCb.className = 'lock-cb';
+    lockCb.checked = !!t.locked;
+    lockCb.addEventListener('change', ()=>{ t.locked = lockCb.checked; renderGantt(); });
+    tdLock.appendChild(lockCb);
 
     const tdDel = document.createElement('td');
     const delBtn = document.createElement('button');
@@ -1068,11 +1082,12 @@ function renderGantt(){
     delBtn.textContent = '✕';
     delBtn.addEventListener('click', ()=>{
       gantt.tasks = gantt.tasks.filter(x=>x.id!==t.id);
+      rebalanceArray(gantt.tasks, gantt.total, null);
       renderGantt();
     });
     tdDel.appendChild(delBtn);
 
-    tr.append(tdHandle, tdColor, tdName, tdStart, tdDur, tdDel);
+    tr.append(tdHandle, tdColor, tdName, tdStart, tdDur, tdLock, tdDel);
     tbody.appendChild(tr);
   });
 }
@@ -1080,20 +1095,29 @@ function renderGantt(){
 function loadIntoGantt(source){
   let running = 0;
   gantt.tasks = source.sections.map(s=>{
-    const t = { id: uid(), name: s.name, start: running, duration: Math.max(s.duration,0.1), color: s.color };
+    const t = { id: uid(), name: s.name, start: running, duration: Math.max(s.duration,0.1), color: s.color, locked: !!s.locked };
     running += s.duration;
     return t;
   });
   gantt.unit = source.unit;
+  gantt.total = source.total;
   document.getElementById('g-unit').value = gantt.unit;
+  document.getElementById('g-total').value = gantt.total;
   renderGantt();
 }
 
 document.getElementById('g-unit').addEventListener('input', renderGantt);
-document.getElementById('g-total').addEventListener('change', renderGantt);
+document.getElementById('g-total').addEventListener('change', ()=>{
+  gantt.total = parseFloat(document.getElementById('g-total').value) || gantt.total;
+  rebalanceArray(gantt.tasks, gantt.total, null);
+  renderGantt();
+});
 document.getElementById('g-add').addEventListener('click', ()=>{
   const total = ganttTotal();
-  gantt.tasks.push({ id: uid(), name:'New task', start: 0, duration: Math.max(0.5,total/6), color: nextColor() });
+  gantt.tasks.push({ id: uid(), name:'New task', start: 0, duration: 0, color: nextColor(), locked:false });
+  const added = gantt.tasks[gantt.tasks.length-1];
+  added.duration = Math.max(0.2, total/6);
+  rebalanceArray(gantt.tasks, gantt.total, added.id);
   renderGantt();
 });
 document.getElementById('g-load-det').addEventListener('click', ()=> loadIntoGantt(det));
