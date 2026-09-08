@@ -154,6 +154,19 @@
   }
   .ministack .seg{display:flex;align-items:center;justify-content:center;font-size:10.5px;color:rgba(0,0,0,.68);font-weight:600;white-space:nowrap;overflow:hidden;}
 
+  .mini-gantt{
+    position:relative;
+    height:30px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    background:var(--panel-2);
+    overflow:hidden;
+  }
+  .mini-gantt .bar{
+    position:absolute;top:3px;bottom:3px;border-radius:3px;
+    box-shadow:0 0 0 1px rgba(0,0,0,.12);
+  }
+
   .stackbar{
     display:flex;
     height:56px;
@@ -419,6 +432,8 @@
   <!-- OPTIMIZED DETAILED -->
   <section class="view" id="view-optimized">
     <div class="panel">
+      <div class="mini-label">High-level, for reference</div>
+      <div id="opt-mini-hl" class="ministack" style="margin-bottom:14px;"></div>
       <div class="mini-label">Detailed, for reference</div>
       <div id="opt-mini" class="ministack"></div>
     </div>
@@ -463,6 +478,14 @@
   <!-- GANTT -->
   <section class="view" id="view-gantt">
     <div class="panel">
+      <div class="mini-label">High-level, for reference</div>
+      <div id="gantt-mini-hl" class="ministack" style="margin-bottom:14px;"></div>
+      <div class="mini-label">Detailed, for reference</div>
+      <div id="gantt-mini-det" class="ministack" style="margin-bottom:14px;"></div>
+      <div class="mini-label">Optimized detailed, for reference</div>
+      <div id="gantt-mini-opt" class="ministack"></div>
+    </div>
+    <div class="panel">
       <div class="panel-head">
         <div>
           <h2>Parallel implementation (Gantt)</h2>
@@ -506,6 +529,16 @@
 
   <!-- CALCULATOR -->
   <section class="view" id="view-calculator">
+    <div class="panel">
+      <div class="mini-label">High-level, for reference</div>
+      <div id="calc-mini-hl" class="ministack" style="margin-bottom:14px;"></div>
+      <div class="mini-label">Detailed, for reference</div>
+      <div id="calc-mini-det" class="ministack" style="margin-bottom:14px;"></div>
+      <div class="mini-label">Optimized detailed, for reference</div>
+      <div id="calc-mini-opt" class="ministack" style="margin-bottom:14px;"></div>
+      <div class="mini-label">Gantt, for reference</div>
+      <div id="calc-mini-gantt" class="mini-gantt"></div>
+    </div>
     <div class="panel">
       <div class="panel-head">
         <div>
@@ -863,6 +896,20 @@ function renderMini(sourceState, mountEl){
   });
 }
 
+function renderMiniGantt(mountEl){
+  mountEl.innerHTML = '';
+  const total = ganttTotal();
+  gantt.tasks.forEach(t=>{
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    bar.style.left = (t.start/total*100) + '%';
+    bar.style.width = Math.max(t.duration/total*100, 1) + '%';
+    bar.style.background = t.color;
+    bar.title = t.name + ': ' + fmt(t.start) + '–' + fmt(t.start+t.duration) + ' ' + gantt.unit;
+    mountEl.appendChild(bar);
+  });
+}
+
 function renderHL(){
   hl.total = parseFloat(document.getElementById('hl-total').value) || hl.total;
   hl.unit = document.getElementById('hl-unit').value || hl.unit;
@@ -875,6 +922,9 @@ function renderHL(){
     '0.1'
   );
   renderMini(hl, document.getElementById('det-mini'));
+  renderMini(hl, document.getElementById('opt-mini-hl'));
+  renderMini(hl, document.getElementById('gantt-mini-hl'));
+  renderMini(hl, document.getElementById('calc-mini-hl'));
 }
 
 function renderDet(){
@@ -889,6 +939,8 @@ function renderDet(){
     '0.1'
   );
   renderMini(det, document.getElementById('opt-mini'));
+  renderMini(det, document.getElementById('gantt-mini-det'));
+  renderMini(det, document.getElementById('calc-mini-det'));
 }
 
 function renderOpt(){
@@ -902,6 +954,8 @@ function renderOpt(){
     renderOpt,
     '0.1'
   );
+  renderMini(opt, document.getElementById('gantt-mini-opt'));
+  renderMini(opt, document.getElementById('calc-mini-opt'));
 }
 
 document.getElementById('hl-total').addEventListener('change', ()=>{
@@ -1090,6 +1144,8 @@ function renderGantt(){
     tr.append(tdHandle, tdColor, tdName, tdStart, tdDur, tdLock, tdDel);
     tbody.appendChild(tr);
   });
+
+  renderMiniGantt(document.getElementById('calc-mini-gantt'));
 }
 
 function loadIntoGantt(source){
