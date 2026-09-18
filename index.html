@@ -536,7 +536,7 @@ function wireShiftGroup(groupId, state, renderFn){
       state.shift = shifts;
       state.total = shifts * 8;
       if (state.sections) rebalance(state, null);
-      if (state.tasks) rebalanceArray(state.tasks, state.total, null);
+      if (state.tasks) absorbGanttTotalChange();
       renderFn();
     });
   });
@@ -613,6 +613,80 @@ function rebalanceArray(arr, total, excludeId){
 }
 function rebalance(state, excludeId){ rebalanceArray(state.sections, state.total, excludeId); }
 
+// Gantt-specific: the whole timeline (top-level tasks AND their sub-tasks)
+// ripples like a single sequential chain in TIME order — editing one item's
+// duration only ever affects whatever comes immediately after it, by
+// shifting that neighbor's start to meet the new end while keeping the
+// neighbor's OWN end fixed (so its duration absorbs the change). This keeps
+// the total exactly at the fixed target without disturbing anything further
+// downstream, and cascades only as far as it actually needs to.
+const GANTT_MIN = 5/60;
+
+function timeOrderedGanttTasks(){
+  return [...gantt.tasks].sort((a,b)=>{
+    const aStart = (a.subtasks && a.subtasks.length) ? Math.min(...a.subtasks.map(s=>s.start)) : a.start;
+    const bStart = (b.subtasks && b.subtasks.length) ? Math.min(...b.subtasks.map(s=>s.start)) : b.start;
+    return aStart - bStart;
+  });
+}
+
+function rippleGanttTopLevel(editedTaskId, delta){
+  const ordered = timeOrderedGanttTasks();
+  const idx = ordered.findIndex(t=>t.id===editedTaskId);
+  if (idx<0) return delta;
+  let remaining = delta;
+  for (let i = idx+1; i < ordered.length; i++){
+    if (Math.abs(remaining) < 1e-9) break;
+    const t = ordered[i];
+    if (t.locked) break;
+    if (t.subtasks && t.subtasks.length>0){
+      const leftover = rippleGanttSubtasks(t, -1, remaining);
+      t.duration = t.subtasks.reduce((s,x)=>s+x.duration,0);
+      remaining = leftover;
+    } else {
+      const oldEnd = t.start + t.duration;
+      let newStart = Math.max(0, t.start + remaining);
+      let newDuration = oldEnd - newStart;
+      if (newDuration < GANTT_MIN){ newDuration = GANTT_MIN; newStart = oldEnd - GANTT_MIN; }
+      const actualShift = newStart - t.start;
+      t.start = newStart;
+      t.duration = newDuration;
+      remaining -= actualShift;
+    }
+  }
+  return remaining;
+}
+
+function onGanttTaskDurationEdited(task, newDuration){
+  const oldEnd = task.start + task.duration;
+  task.duration = Math.max(GANTT_MIN, newDuration);
+  const newEnd = task.start + task.duration;
+  rippleGanttTopLevel(task.id, newEnd-oldEnd);
+}
+
+function bubbleParentDurationChange(parent, oldDuration){
+  const delta = parent.duration - oldDuration;
+  if (Math.abs(delta) > 1e-9) rippleGanttTopLevel(parent.id, delta);
+}
+
+// Used when the fixed total itself changes (shift model, or the Total field):
+// the very last task in time order absorbs it directly — nothing before it moves.
+function absorbGanttTotalChange(){
+  const diff = gantt.total - gantt.tasks.reduce((s,x)=>s+x.duration,0);
+  if (Math.abs(diff) < 1e-9) return;
+  const ordered = timeOrderedGanttTasks();
+  for (let i = ordered.length-1; i>=0; i--){
+    const t = ordered[i];
+    if (t.locked) continue;
+    const newVal = t.duration + diff;
+    if (newVal >= 0){
+      t.duration = newVal;
+      if (t.subtasks && t.subtasks.length>0) rebalanceArray(t.subtasks, newVal, null);
+      return;
+    }
+  }
+}
+
 function onSubtaskDurationEdited(parent, subId, newVal, outerRebalanceFn){
   const sub = parent.subtasks.find(s=>s.id===subId);
   sub.duration = newVal;
@@ -620,6 +694,67 @@ function onSubtaskDurationEdited(parent, subId, newVal, outerRebalanceFn){
   parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
   outerRebalanceFn();
 }
+
+// Gantt sub-tasks are positioned in time (they have their own start), so a
+// duration edit should NOT proportionally resize every sibling — only the
+// immediately following one should absorb the change, by shifting its start
+// to close/open the gap while keeping its own end fixed. If it can't fully
+// absorb (hits its minimum, or is locked), whatever's left cascades to the
+// next one after that; a genuinely earlier sibling is never touched.
+function rippleGanttSubtasks(parent, editedIndex, delta){
+  let remaining = delta;
+  for (let i = editedIndex+1; i < parent.subtasks.length; i++){
+    if (Math.abs(remaining) < 1e-9) break;
+    const sub = parent.subtasks[i];
+    if (sub.locked) break;
+    const oldEnd = sub.start + sub.duration;
+    let newStart = Math.max(0, sub.start + remaining);
+    let newDuration = oldEnd - newStart;
+    if (newDuration < GANTT_MIN){
+      newDuration = GANTT_MIN;
+      newStart = oldEnd - GANTT_MIN;
+    }
+    const actualShift = newStart - sub.start;
+    sub.start = newStart;
+    sub.duration = newDuration;
+    remaining -= actualShift;
+  }
+  return remaining;
+}
+function onGanttSubtaskDurationEdited(parent, subId, newDuration){
+  const idx = parent.subtasks.findIndex(s=>s.id===subId);
+  if (idx<0) return;
+  const oldParentDuration = parent.duration;
+  const sub = parent.subtasks[idx];
+  const oldEnd = sub.start + sub.duration;
+  sub.duration = Math.max(GANTT_MIN, newDuration);
+  const newEnd = sub.start + sub.duration;
+  rippleGanttSubtasks(parent, idx, newEnd-oldEnd);
+  parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
+  bubbleParentDurationChange(parent, oldParentDuration);
+}
+function removeGanttSubtask(parent, subId){
+  const idx = parent.subtasks.findIndex(s=>s.id===subId);
+  if (idx<0) return;
+  const oldParentDuration = parent.duration;
+  const removedDuration = parent.subtasks[idx].duration;
+  rippleGanttSubtasks(parent, idx, -removedDuration);
+  parent.subtasks = parent.subtasks.filter(s=>s.id!==subId);
+  parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
+  bubbleParentDurationChange(parent, oldParentDuration);
+}
+function addGanttSubtask(parent){
+  if (parent.subtasks.length===0){
+    parent.subtasks.push({ id: uid(), name: parent.name + ' – part 1', duration: parent.duration, locked:false, start: parent.start||0 });
+  }
+  const last = parent.subtasks[parent.subtasks.length-1];
+  const newDur = Math.max(GANTT_MIN, Math.min(last.duration/2, last.duration-GANTT_MIN));
+  last.duration -= newDur;
+  const newSub = { id: uid(), name: 'New sub-task', duration: newDur, locked:false, start: last.start+last.duration };
+  parent.subtasks.push(newSub);
+  return newSub;
+}
+
 function addSubtask(parent){
   if (parent.subtasks.length===0){
     parent.subtasks.push({ id: uid(), name: parent.name + ' – part 1', duration: parent.duration, locked:false, start: parent.start||0 });
@@ -633,6 +768,10 @@ function removeSubtask(parent, subId){
   if (parent.subtasks.length>0) rebalanceArray(parent.subtasks, parent.duration, null);
 }
 function fmt(n){ return (Math.round(n*100)/100).toString(); }
+function focusNameField(id){
+  const el = document.querySelector('[data-name-id="'+id+'"]');
+  if (el){ el.focus(); el.select(); }
+}
 
 // ---------- render: bar + ticks + total-line only (no table) ----------
 function renderBarTicksTotal(state, barEl, ticksEl, totalLineEl){
@@ -725,7 +864,12 @@ function buildSectionRow(state, sec, onChange, allowSubtasks, refreshVisuals){
     subBtn.className = 'subadd-btn';
     subBtn.textContent = '⊕';
     subBtn.title = 'Add sub-task';
-    subBtn.addEventListener('click', ()=>{ addSubtask(sec); onChange(); });
+    subBtn.addEventListener('click', ()=>{
+      addSubtask(sec);
+      const newId = sec.subtasks[sec.subtasks.length-1].id;
+      onChange();
+      focusNameField(newId);
+    });
     nameWrap.appendChild(subBtn);
   }
   tdName.appendChild(nameWrap);
@@ -791,6 +935,7 @@ function buildSubtaskRow(state, sec, sub, onChange, refreshVisuals){
   nameInput.className = 'name-input';
   nameInput.type = 'text';
   nameInput.value = sub.name;
+  nameInput.dataset.nameId = sub.id;
   nameInput.addEventListener('input', ()=>{ sub.name = nameInput.value; refreshVisuals(); });
   tdName.appendChild(nameInput);
 
@@ -845,6 +990,17 @@ function renderMini(sourceState, mountEl){
     mountEl.appendChild(seg);
   });
 }
+function fitBarText(el, maxSize, minSize){
+  let size = maxSize;
+  el.style.fontSize = size + 'px';
+  let guard = 0;
+  while (el.scrollWidth > el.clientWidth && size > minSize && guard < 40){
+    size -= 0.5;
+    el.style.fontSize = size + 'px';
+    guard++;
+  }
+}
+
 function renderMiniGantt(mountEl){
   mountEl.innerHTML = '';
   const total = ganttTotal();
@@ -860,6 +1016,7 @@ function renderMiniGantt(mountEl){
     bar.textContent = item.ref.name;
     lane.appendChild(bar);
     mountEl.appendChild(lane);
+    fitBarText(bar, 9.5, 6);
   });
 }
 
@@ -944,14 +1101,18 @@ function snapMove(rawVal, alignPoints, snapHoursThreshold){
   return { value: snapped, label: null };
 }
 
-function commitDurationChange(item, newDuration){
+function commitDurationChange(item, delta){
   if (item.isSub){
-    onSubtaskDurationEdited(item.parent, item.ref.id, newDuration, ()=>{ rebalanceArray(gantt.tasks, gantt.total, item.parent.id); renderGantt(); });
+    const parent = item.parent;
+    const oldParentDuration = parent.duration;
+    const idx = parent.subtasks.findIndex(s=>s.id===item.ref.id);
+    if (idx>=0) rippleGanttSubtasks(parent, idx, delta);
+    parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
+    bubbleParentDurationChange(parent, oldParentDuration);
   } else {
-    item.ref.duration = newDuration;
-    rebalanceArray(gantt.tasks, gantt.total, item.ref.id);
-    renderGantt();
+    rippleGanttTopLevel(item.ref.id, delta);
   }
+  renderGantt();
 }
 
 function attachBarInteraction(bar, item){
@@ -1030,7 +1191,8 @@ function attachBarInteraction(bar, item){
       if (mode==='move'){
         renderGantt();
       } else {
-        commitDurationChange(item, item.ref.duration);
+        const endDelta = (item.ref.start + item.ref.duration) - initEnd;
+        commitDurationChange(item, endDelta);
       }
     }
     document.addEventListener('mousemove', onMove);
@@ -1045,7 +1207,30 @@ function attachBarInteraction(bar, item){
   rightHandle.addEventListener('mousedown', (e)=> beginDrag('resize-right', e));
 }
 
+// Close any idle gaps: tasks that don't overlap with something earlier get
+// pulled back to start right where coverage currently ends. Overlapping
+// (parallel) tasks are left alone, and locked tasks are never moved.
+function compactGanttGaps(){
+  const items = flattenGanttTasks();
+  const sorted = [...items].sort((a,b)=> a.ref.start - b.ref.start);
+  let coverage = 0;
+  sorted.forEach(it=>{
+    if (!it.ref.locked && it.ref.start > coverage + 1e-9){
+      it.ref.start = coverage;
+    }
+    coverage = Math.max(coverage, it.ref.start + it.ref.duration);
+  });
+}
+
 function renderGanttVisuals(){
+  compactGanttGaps();
+  // Safety net: the fixed total should never silently drift. If something
+  // (an edge case in a drag, an edit, a delete) left the sum off-target,
+  // let the last unlocked task in time order absorb the difference so nothing
+  // earlier in the timeline is disturbed.
+  const preSum = gantt.tasks.reduce((s,x)=>s+x.duration,0);
+  if (Math.abs(preSum - gantt.total) > 1e-6) absorbGanttTotalChange();
+
   const total = ganttTotal();
   const durSum = gantt.tasks.reduce((s,x)=>s+x.duration,0);
   const totalLineEl = document.getElementById('g-total-line');
@@ -1083,6 +1268,7 @@ function renderGanttVisuals(){
     track.appendChild(bar);
     row.append(label, track);
     rowsEl.appendChild(row);
+    fitBarText(bar, 11, 7);
   });
 
   renderMiniGantt(document.getElementById('calc-mini-gantt'));
@@ -1128,7 +1314,11 @@ function buildTaskRow(t){
   subBtn.className = 'subadd-btn';
   subBtn.textContent = '⊕';
   subBtn.title = 'Add sub-task';
-  subBtn.addEventListener('click', ()=>{ addSubtask(t); renderGantt(); });
+  subBtn.addEventListener('click', ()=>{
+    const newSub = addGanttSubtask(t);
+    renderGantt();
+    focusNameField(newSub.id);
+  });
   nameWrap.appendChild(subBtn);
   tdName.appendChild(nameWrap);
 
@@ -1157,7 +1347,7 @@ function buildTaskRow(t){
   } else {
     tdDur.appendChild(createTimeField({
       getDec: ()=> t.duration,
-      setDec: (v)=>{ t.duration = v; rebalanceArray(gantt.tasks, gantt.total, t.id); renderGantt(); },
+      setDec: (v)=>{ onGanttTaskDurationEdited(t, v); renderGantt(); },
       disabled: t.locked
     }));
   }
@@ -1176,8 +1366,8 @@ function buildTaskRow(t){
   delBtn.className = 'del-btn';
   delBtn.textContent = '✕';
   delBtn.addEventListener('click', ()=>{
+    rippleGanttTopLevel(t.id, -t.duration);
     gantt.tasks = gantt.tasks.filter(x=>x.id!==t.id);
-    rebalanceArray(gantt.tasks, gantt.total, null);
     renderGantt();
   });
   tdDel.appendChild(delBtn);
@@ -1207,6 +1397,7 @@ function buildGanttSubtaskRow(t, sub){
   nameInput.className = 'name-input';
   nameInput.type = 'text';
   nameInput.value = sub.name;
+  nameInput.dataset.nameId = sub.id;
   nameInput.addEventListener('input', ()=>{ sub.name = nameInput.value; renderGanttVisuals(); });
   tdName.appendChild(nameInput);
 
@@ -1219,7 +1410,7 @@ function buildGanttSubtaskRow(t, sub){
   const tdDur = document.createElement('td');
   tdDur.appendChild(createTimeField({
     getDec: ()=> sub.duration,
-    setDec: (v)=>{ onSubtaskDurationEdited(t, sub.id, v, ()=>{ rebalanceArray(gantt.tasks, gantt.total, t.id); renderGantt(); }); },
+    setDec: (v)=>{ onGanttSubtaskDurationEdited(t, sub.id, v); renderGantt(); },
     disabled: sub.locked
   }));
 
@@ -1236,7 +1427,7 @@ function buildGanttSubtaskRow(t, sub){
   const delBtn = document.createElement('button');
   delBtn.className = 'del-btn';
   delBtn.textContent = '✕';
-  delBtn.addEventListener('click', ()=>{ removeSubtask(t, sub.id); renderGantt(); });
+  delBtn.addEventListener('click', ()=>{ removeGanttSubtask(t, sub.id); renderGantt(); });
   tdDel.appendChild(delBtn);
 
   tr.append(tdHandle, tdColor, tdName, tdStart, tdDur, tdLock, tdDel);
@@ -1262,11 +1453,10 @@ function loadIntoGantt(source){
   renderGantt();
 }
 document.getElementById('g-add').addEventListener('click', ()=>{
-  const total = ganttTotal();
-  gantt.tasks.push({ id: uid(), name:'New task', start: 0, duration: 0, color: nextColor(), locked:false, subtasks: [] });
-  const added = gantt.tasks[gantt.tasks.length-1];
-  added.duration = Math.max(0.1, total/6);
-  rebalanceArray(gantt.tasks, gantt.total, added.id);
+  const newDur = Math.max(0.1, ganttTotal()/6);
+  const newTask = { id: uid(), name:'New task', start: 0, duration: newDur, color: nextColor(), locked:false, subtasks: [] };
+  gantt.tasks.push(newTask);
+  rippleGanttTopLevel(newTask.id, newDur);
   renderGantt();
 });
 document.getElementById('g-load-det').addEventListener('click', ()=> loadIntoGantt(det));
@@ -1274,7 +1464,7 @@ document.getElementById('g-load-det').addEventListener('click', ()=> loadIntoGan
 // ---------- mount global time fields + wire shift groups ----------
 mountTimeField('hl-total-field', ()=>hl.total, (v)=>{ hl.total=v; rebalance(hl,null); renderHL(); }, 'hl-total');
 mountTimeField('det-total-field', ()=>det.total, (v)=>{ det.total=v; rebalance(det,null); renderDet(); }, 'det-total');
-mountTimeField('g-total-field', ()=>gantt.total, (v)=>{ gantt.total=v; rebalanceArray(gantt.tasks, gantt.total, null); renderGantt(); }, 'g-total');
+mountTimeField('g-total-field', ()=>gantt.total, (v)=>{ gantt.total=v; absorbGanttTotalChange(); renderGantt(); }, 'g-total');
 mountTimeField('calc-time-field', ()=>calc.prodHours, (v)=>{ calc.prodHours=v; renderCalc(); }, 'calc-time');
 
 wireShiftGroup('shift-group-hl', hl, ()=>{ document.getElementById('hl-total').value = decToHHMM(hl.total); renderHL(); });
