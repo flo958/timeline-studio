@@ -582,11 +582,16 @@ function makeDragHandle(id, arr, onChange, tr){
 }
 
 // ---------- rebalance logic ----------
+function isEffectivelyLocked(item){
+  if (item.locked) return true;
+  if (item.subtasks && item.subtasks.length>0) return item.subtasks.every(s=>s.locked);
+  return false;
+}
 function rebalanceArray(arr, total, excludeId){
   const current = arr.reduce((s,x)=>s+x.duration,0);
   let diff = total - current;
   if (Math.abs(diff) < 1e-9) return;
-  let pool = arr.filter(s=> s.id!==excludeId && !s.locked);
+  let pool = arr.filter(s=> s.id!==excludeId && !isEffectivelyLocked(s));
   if (pool.length === 0) return;
   let remaining = diff;
   let guard = 0;
@@ -622,66 +627,176 @@ function rebalance(state, excludeId){ rebalanceArray(state.sections, state.total
 // downstream, and cascades only as far as it actually needs to.
 const GANTT_MIN = 5/60;
 
-function timeOrderedGanttTasks(){
-  return [...gantt.tasks].sort((a,b)=>{
-    const aStart = (a.subtasks && a.subtasks.length) ? Math.min(...a.subtasks.map(s=>s.start)) : a.start;
-    const bStart = (b.subtasks && b.subtasks.length) ? Math.min(...b.subtasks.map(s=>s.start)) : b.start;
-    return aStart - bStart;
-  });
+// ---------- Gantt ripple engine ----------
+// Every visible bar (a plain top-level task OR a sub-task) is treated as one
+// node in a single chronological chain across the whole Gantt. Editing a
+// node's END (duration grows/shrinks, or a resize-right, or a move) ripples
+// FORWARD: only the next node in time absorbs it, by shifting its start to
+// meet the new end while keeping ITS OWN end fixed — everything further
+// downstream is untouched. Editing a node's START only (resize-left) ripples
+// BACKWARD the same way: only the previous node absorbs it, by adjusting its
+// own end (its duration), keeping everything further back untouched. A move
+// changes both start and end together, so it only ever ripples forward, based
+// on how far its end moved — nothing before it is touched.
+function getFlatGanttChain(){
+  return flattenGanttTasks().sort((a,b)=> a.ref.start - b.ref.start);
 }
-
-function rippleGanttTopLevel(editedTaskId, delta){
-  const ordered = timeOrderedGanttTasks();
-  const idx = ordered.findIndex(t=>t.id===editedTaskId);
-  if (idx<0) return delta;
-  let remaining = delta;
-  for (let i = idx+1; i < ordered.length; i++){
-    if (Math.abs(remaining) < 1e-9) break;
-    const t = ordered[i];
-    if (t.locked) break;
-    if (t.subtasks && t.subtasks.length>0){
-      const leftover = rippleGanttSubtasks(t, -1, remaining);
-      t.duration = t.subtasks.reduce((s,x)=>s+x.duration,0);
-      remaining = leftover;
-    } else {
-      const oldEnd = t.start + t.duration;
-      let newStart = Math.max(0, t.start + remaining);
-      let newDuration = oldEnd - newStart;
-      if (newDuration < GANTT_MIN){ newDuration = GANTT_MIN; newStart = oldEnd - GANTT_MIN; }
-      const actualShift = newStart - t.start;
-      t.start = newStart;
-      t.duration = newDuration;
-      remaining -= actualShift;
-    }
+function syncGanttParent(ref){
+  const parent = gantt.tasks.find(t=> t.subtasks && t.subtasks.includes(ref));
+  if (parent) parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
+  return parent;
+}
+// Returns editedRef's immediate neighbors in the chain, captured BEFORE any
+// mutation — needed for moves, since a large move can shift editedRef past
+// where a neighbor now sits, and re-deriving neighbors from a fresh sort
+// afterward would then grab the wrong item.
+function getGanttNeighbors(editedRef){
+  const chain = getFlatGanttChain();
+  const idx = chain.findIndex(it=>it.ref===editedRef);
+  if (idx<0) return { prev: null, next: null };
+  return {
+    prev: idx>0 ? chain[idx-1].ref : null,
+    next: idx+1<chain.length ? chain[idx+1].ref : null
+  };
+}
+// Self-healing forward ripple: walks forward from either editedRef's current
+// chain position (default) or an explicitly given starting neighbor,
+// snapping each item's start to exactly where the previous one now ends.
+// Snapping to the actual current position (rather than a relative shift)
+// also closes any pre-existing gap at that boundary, not just a fresh one.
+// Stops as soon as an item is already touching correctly, or hits a locked
+// item.
+function rippleGanttChainForward(editedRef, startFromRef){
+  const chain = getFlatGanttChain().filter(it=>it.ref!==editedRef);
+  let startIdx;
+  if (startFromRef !== undefined && startFromRef !== null){
+    startIdx = chain.findIndex(it=>it.ref===startFromRef);
+    if (startIdx<0) return;
+  } else {
+    // editedRef is excluded from `chain`, so its immediate successor is
+    // simply the first entry whose start is at or after it.
+    startIdx = chain.findIndex(it=> it.ref.start >= editedRef.start);
+    if (startIdx<0) return;
   }
-  return remaining;
+  const touched = new Set();
+  let prevEnd = editedRef.start + editedRef.duration;
+  for (let i=startIdx; i<chain.length; i++){
+    const it = chain[i];
+    if (Math.abs(it.ref.start - prevEnd) < 1e-9) break;
+    if (it.ref.locked) break;
+    const oldEnd = it.ref.start + it.ref.duration;
+    let newStart = Math.max(0, prevEnd);
+    let newDuration = oldEnd - newStart;
+    if (newDuration < GANTT_MIN){ newDuration = GANTT_MIN; newStart = oldEnd - GANTT_MIN; }
+    it.ref.start = newStart;
+    it.ref.duration = newDuration;
+    prevEnd = it.ref.start + it.ref.duration;
+    if (it.parent) touched.add(it.parent);
+  }
+  touched.forEach(p=> p.duration = p.subtasks.reduce((s,x)=>s+x.duration,0));
 }
-
-function onGanttTaskDurationEdited(task, newDuration){
-  const oldEnd = task.start + task.duration;
-  task.duration = Math.max(GANTT_MIN, newDuration);
-  const newEnd = task.start + task.duration;
-  rippleGanttTopLevel(task.id, newEnd-oldEnd);
+// Mirror of the above, walking backward: snaps each item's END to exactly
+// where the next one now starts, adjusting its own duration while keeping
+// its own start fixed — unless it hits its minimum, in which case it also
+// pulls its own start earlier to make up the rest, continuing the cascade.
+function rippleGanttChainBackward(editedRef, startFromRef){
+  const chain = getFlatGanttChain().filter(it=>it.ref!==editedRef);
+  let startIdx;
+  if (startFromRef !== undefined && startFromRef !== null){
+    startIdx = chain.findIndex(it=>it.ref===startFromRef);
+    if (startIdx<0) return;
+  } else {
+    // editedRef is excluded from `chain`; walk from the last entry whose
+    // start is before it.
+    for (let i=chain.length-1; i>=0; i--){
+      if (chain[i].ref.start <= editedRef.start){ startIdx = i; break; }
+    }
+    if (startIdx === undefined) return;
+  }
+  const touched = new Set();
+  let nextStart = editedRef.start;
+  for (let i=startIdx; i>=0; i--){
+    const it = chain[i];
+    const itEnd = it.ref.start + it.ref.duration;
+    if (Math.abs(itEnd - nextStart) < 1e-9) break;
+    if (it.ref.locked) break;
+    let newDuration = nextStart - it.ref.start;
+    if (newDuration < GANTT_MIN){
+      const shortfall = GANTT_MIN - newDuration;
+      it.ref.start = Math.max(0, it.ref.start - shortfall);
+      newDuration = GANTT_MIN;
+    }
+    it.ref.duration = newDuration;
+    nextStart = it.ref.start;
+    if (it.parent) touched.add(it.parent);
+  }
+  touched.forEach(p=> p.duration = p.subtasks.reduce((s,x)=>s+x.duration,0));
 }
-
-function bubbleParentDurationChange(parent, oldDuration){
-  const delta = parent.duration - oldDuration;
-  if (Math.abs(delta) > 1e-9) rippleGanttTopLevel(parent.id, delta);
+// Public entry points used by the UI — call after mutating ref.start/duration.
+function applyGanttEndDelta(ref){
+  rippleGanttChainForward(ref);
+  syncGanttParent(ref);
 }
-
-// Used when the fixed total itself changes (shift model, or the Total field):
-// the very last task in time order absorbs it directly — nothing before it moves.
+function applyGanttStartDelta(ref){
+  rippleGanttChainBackward(ref);
+  syncGanttParent(ref);
+}
+function editGanttDuration(ref, newDuration){
+  ref.duration = Math.max(GANTT_MIN, newDuration);
+  applyGanttEndDelta(ref);
+}
+function editGanttStart(ref, newStart){
+  applyGanttMove(ref, newStart);
+}
+// Shared by the table "Start" field and the drag-move commit. A move can
+// freely overlap with whatever PRECEDES it — that's exactly how parallel
+// tracks get arranged in a Gantt chart, so nothing behind it ever reacts.
+// But it must never leave a gap to whatever FOLLOWS it, so that ripples
+// forward only: the next item's start snaps to this item's new end, and its
+// own duration adjusts (grows or shrinks) to keep ITS end fixed, so nothing
+// further downstream ever moves either. The successor must be captured
+// BEFORE the move: moving ref onto or past another item's position (e.g.
+// landing it exactly parallel to something) would otherwise make a fresh
+// post-move lookup grab that overlapped item instead of ref's real,
+// original successor.
+function applyGanttMove(ref, newStart){
+  const nextNeighbor = getGanttNeighbors(ref).next;
+  ref.start = Math.max(0, newStart);
+  if (nextNeighbor) rippleGanttChainForward(ref, nextNeighbor);
+  syncGanttParent(ref);
+}
+function removeGanttItem(ref){
+  const parent = gantt.tasks.find(t=> t.subtasks && t.subtasks.includes(ref));
+  ref.duration = 0;
+  rippleGanttChainForward(ref);
+  if (parent){
+    parent.subtasks = parent.subtasks.filter(s=>s!==ref);
+    parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
+  } else {
+    gantt.tasks = gantt.tasks.filter(t=>t!==ref);
+  }
+}
+// The timeline's actual end (the latest point anything reaches) — this is
+// what must equal the fixed total, NOT the sum of every duration: once bars
+// are allowed to overlap (deliberate parallel tracks), the sum can
+// legitimately exceed the total without anything being wrong.
+function ganttSpanEnd(){
+  const chain = getFlatGanttChain();
+  if (chain.length===0) return 0;
+  return Math.max(...chain.map(it=> it.ref.start + it.ref.duration));
+}
+// Called when the fixed total itself changes (shift model, or the Total
+// field): the very last node in time order stretches or shrinks to reach
+// exactly the new total — nothing before it moves.
 function absorbGanttTotalChange(){
-  const diff = gantt.total - gantt.tasks.reduce((s,x)=>s+x.duration,0);
-  if (Math.abs(diff) < 1e-9) return;
-  const ordered = timeOrderedGanttTasks();
-  for (let i = ordered.length-1; i>=0; i--){
-    const t = ordered[i];
-    if (t.locked) continue;
-    const newVal = t.duration + diff;
-    if (newVal >= 0){
-      t.duration = newVal;
-      if (t.subtasks && t.subtasks.length>0) rebalanceArray(t.subtasks, newVal, null);
+  const chain = getFlatGanttChain();
+  for (let i=chain.length-1; i>=0; i--){
+    const it = chain[i];
+    if (it.ref.locked) continue;
+    const newDuration = gantt.total - it.ref.start;
+    if (newDuration >= GANTT_MIN){
+      it.ref.duration = newDuration;
+      if (it.parent) it.parent.duration = it.parent.subtasks.reduce((s,x)=>s+x.duration,0);
       return;
     }
   }
@@ -695,54 +810,6 @@ function onSubtaskDurationEdited(parent, subId, newVal, outerRebalanceFn){
   outerRebalanceFn();
 }
 
-// Gantt sub-tasks are positioned in time (they have their own start), so a
-// duration edit should NOT proportionally resize every sibling — only the
-// immediately following one should absorb the change, by shifting its start
-// to close/open the gap while keeping its own end fixed. If it can't fully
-// absorb (hits its minimum, or is locked), whatever's left cascades to the
-// next one after that; a genuinely earlier sibling is never touched.
-function rippleGanttSubtasks(parent, editedIndex, delta){
-  let remaining = delta;
-  for (let i = editedIndex+1; i < parent.subtasks.length; i++){
-    if (Math.abs(remaining) < 1e-9) break;
-    const sub = parent.subtasks[i];
-    if (sub.locked) break;
-    const oldEnd = sub.start + sub.duration;
-    let newStart = Math.max(0, sub.start + remaining);
-    let newDuration = oldEnd - newStart;
-    if (newDuration < GANTT_MIN){
-      newDuration = GANTT_MIN;
-      newStart = oldEnd - GANTT_MIN;
-    }
-    const actualShift = newStart - sub.start;
-    sub.start = newStart;
-    sub.duration = newDuration;
-    remaining -= actualShift;
-  }
-  return remaining;
-}
-function onGanttSubtaskDurationEdited(parent, subId, newDuration){
-  const idx = parent.subtasks.findIndex(s=>s.id===subId);
-  if (idx<0) return;
-  const oldParentDuration = parent.duration;
-  const sub = parent.subtasks[idx];
-  const oldEnd = sub.start + sub.duration;
-  sub.duration = Math.max(GANTT_MIN, newDuration);
-  const newEnd = sub.start + sub.duration;
-  rippleGanttSubtasks(parent, idx, newEnd-oldEnd);
-  parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
-  bubbleParentDurationChange(parent, oldParentDuration);
-}
-function removeGanttSubtask(parent, subId){
-  const idx = parent.subtasks.findIndex(s=>s.id===subId);
-  if (idx<0) return;
-  const oldParentDuration = parent.duration;
-  const removedDuration = parent.subtasks[idx].duration;
-  rippleGanttSubtasks(parent, idx, -removedDuration);
-  parent.subtasks = parent.subtasks.filter(s=>s.id!==subId);
-  parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
-  bubbleParentDurationChange(parent, oldParentDuration);
-}
 function addGanttSubtask(parent){
   if (parent.subtasks.length===0){
     parent.subtasks.push({ id: uid(), name: parent.name + ' – part 1', duration: parent.duration, locked:false, start: parent.start||0 });
@@ -1101,16 +1168,21 @@ function snapMove(rawVal, alignPoints, snapHoursThreshold){
   return { value: snapped, label: null };
 }
 
-function commitDurationChange(item, delta){
-  if (item.isSub){
-    const parent = item.parent;
-    const oldParentDuration = parent.duration;
-    const idx = parent.subtasks.findIndex(s=>s.id===item.ref.id);
-    if (idx>=0) rippleGanttSubtasks(parent, idx, delta);
-    parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
-    bubbleParentDurationChange(parent, oldParentDuration);
+function commitDurationChange(item){
+  applyGanttEndDelta(item.ref);
+  renderGantt();
+}
+
+function commitMoveOrStartChange(item, mode, nextNeighbor){
+  if (mode==='resize-left'){
+    applyGanttStartDelta(item.ref);
   } else {
-    rippleGanttTopLevel(item.ref.id, delta);
+    // move: free to overlap backward (parallel tracks), but must never
+    // leave a gap forward. nextNeighbor was captured before the drag
+    // started (see beginDrag) so a move that lands exactly on/past another
+    // item's position doesn't confuse a fresh lookup.
+    if (nextNeighbor) rippleGanttChainForward(item.ref, nextNeighbor);
+    syncGanttParent(item.ref);
   }
   renderGantt();
 }
@@ -1137,6 +1209,7 @@ function attachBarInteraction(bar, item){
     const initStart = item.ref.start;
     const initDuration = item.ref.duration;
     const initEnd = initStart + initDuration;
+    const nextNeighborForMove = getGanttNeighbors(item.ref).next;
     const alignPoints = getAlignPoints(item.ref);
     const snapHoursThreshold = 6/trackRect.width*total;
     bar.style.cursor = mode==='move' ? 'grabbing' : 'ew-resize';
@@ -1188,11 +1261,10 @@ function attachBarInteraction(bar, item){
       document.removeEventListener('mouseup', onUp);
       guide.style.display = 'none';
       guideLabel.style.display = 'none';
-      if (mode==='move'){
-        renderGantt();
+      if (mode==='move' || mode==='resize-left'){
+        commitMoveOrStartChange(item, mode, nextNeighborForMove);
       } else {
-        const endDelta = (item.ref.start + item.ref.duration) - initEnd;
-        commitDurationChange(item, endDelta);
+        commitDurationChange(item);
       }
     }
     document.addEventListener('mousemove', onMove);
@@ -1207,35 +1279,12 @@ function attachBarInteraction(bar, item){
   rightHandle.addEventListener('mousedown', (e)=> beginDrag('resize-right', e));
 }
 
-// Close any idle gaps: tasks that don't overlap with something earlier get
-// pulled back to start right where coverage currently ends. Overlapping
-// (parallel) tasks are left alone, and locked tasks are never moved.
-function compactGanttGaps(){
-  const items = flattenGanttTasks();
-  const sorted = [...items].sort((a,b)=> a.ref.start - b.ref.start);
-  let coverage = 0;
-  sorted.forEach(it=>{
-    if (!it.ref.locked && it.ref.start > coverage + 1e-9){
-      it.ref.start = coverage;
-    }
-    coverage = Math.max(coverage, it.ref.start + it.ref.duration);
-  });
-}
-
 function renderGanttVisuals(){
-  compactGanttGaps();
-  // Safety net: the fixed total should never silently drift. If something
-  // (an edge case in a drag, an edit, a delete) left the sum off-target,
-  // let the last unlocked task in time order absorb the difference so nothing
-  // earlier in the timeline is disturbed.
-  const preSum = gantt.tasks.reduce((s,x)=>s+x.duration,0);
-  if (Math.abs(preSum - gantt.total) > 1e-6) absorbGanttTotalChange();
-
   const total = ganttTotal();
-  const durSum = gantt.tasks.reduce((s,x)=>s+x.duration,0);
+  const spanEnd = ganttSpanEnd();
   const totalLineEl = document.getElementById('g-total-line');
-  const match = Math.abs(durSum - gantt.total) < 1e-6;
-  totalLineEl.innerHTML = '<span>Task durations sum to <strong>' + decToHHMM(durSum) + '</strong></span>' +
+  const match = Math.abs(spanEnd - gantt.total) < 1e-6;
+  totalLineEl.innerHTML = '<span>Timeline ends at <strong>' + decToHHMM(spanEnd) + '</strong></span>' +
     (match ? '<span class="ok">= target (' + decToHHMM(gantt.total) + ')</span>'
            : '<span class="off">target is ' + decToHHMM(gantt.total) + ' — add an unlocked task or raise the total</span>');
 
@@ -1333,7 +1382,7 @@ function buildTaskRow(t){
   } else {
     tdStart.appendChild(createTimeField({
       getDec: ()=> t.start,
-      setDec: (v)=>{ t.start = v; renderGanttVisuals(); },
+      setDec: (v)=>{ editGanttStart(t, v); renderGantt(); },
     }));
   }
 
@@ -1347,7 +1396,7 @@ function buildTaskRow(t){
   } else {
     tdDur.appendChild(createTimeField({
       getDec: ()=> t.duration,
-      setDec: (v)=>{ onGanttTaskDurationEdited(t, v); renderGantt(); },
+      setDec: (v)=>{ editGanttDuration(t, v); renderGantt(); },
       disabled: t.locked
     }));
   }
@@ -1366,8 +1415,7 @@ function buildTaskRow(t){
   delBtn.className = 'del-btn';
   delBtn.textContent = '✕';
   delBtn.addEventListener('click', ()=>{
-    rippleGanttTopLevel(t.id, -t.duration);
-    gantt.tasks = gantt.tasks.filter(x=>x.id!==t.id);
+    removeGanttItem(t);
     renderGantt();
   });
   tdDel.appendChild(delBtn);
@@ -1404,13 +1452,13 @@ function buildGanttSubtaskRow(t, sub){
   const tdStart = document.createElement('td');
   tdStart.appendChild(createTimeField({
     getDec: ()=> sub.start,
-    setDec: (v)=>{ sub.start = v; renderGanttVisuals(); },
+    setDec: (v)=>{ editGanttStart(sub, v); renderGantt(); },
   }));
 
   const tdDur = document.createElement('td');
   tdDur.appendChild(createTimeField({
     getDec: ()=> sub.duration,
-    setDec: (v)=>{ onGanttSubtaskDurationEdited(t, sub.id, v); renderGantt(); },
+    setDec: (v)=>{ editGanttDuration(sub, v); renderGantt(); },
     disabled: sub.locked
   }));
 
@@ -1427,7 +1475,7 @@ function buildGanttSubtaskRow(t, sub){
   const delBtn = document.createElement('button');
   delBtn.className = 'del-btn';
   delBtn.textContent = '✕';
-  delBtn.addEventListener('click', ()=>{ removeGanttSubtask(t, sub.id); renderGantt(); });
+  delBtn.addEventListener('click', ()=>{ removeGanttItem(sub); renderGantt(); });
   tdDel.appendChild(delBtn);
 
   tr.append(tdHandle, tdColor, tdName, tdStart, tdDur, tdLock, tdDel);
@@ -1456,7 +1504,7 @@ document.getElementById('g-add').addEventListener('click', ()=>{
   const newDur = Math.max(0.1, ganttTotal()/6);
   const newTask = { id: uid(), name:'New task', start: 0, duration: newDur, color: nextColor(), locked:false, subtasks: [] };
   gantt.tasks.push(newTask);
-  rippleGanttTopLevel(newTask.id, newDur);
+  rippleGanttChainForward(newTask);
   renderGantt();
 });
 document.getElementById('g-load-det').addEventListener('click', ()=> loadIntoGantt(det));
