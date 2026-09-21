@@ -60,6 +60,7 @@
 
   .shift-group{display:flex;gap:2px;background:var(--panel-2);border-radius:8px;padding:2px;}
   .shift-btn{border:none;background:transparent;color:var(--muted);font-family:var(--font-ui);font-size:11.5px;font-weight:500;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;}
+  .shift-btn:disabled{opacity:.4;cursor:not-allowed;}
   .shift-btn.active{background:var(--accent);color:#ffffff;}
   .shift-btn:not(.active):hover{color:var(--text);}
 
@@ -331,7 +332,13 @@
           <h2>Production rate & takt time calculator</h2>
           <div class="sub">Enter the total batch size — the production time syncs automatically from whichever timeline you pick.</div>
         </div>
+        <div class="shift-group" id="shift-group-calc">
+          <button class="shift-btn active" data-shifts="1">1 shift · 8h</button>
+          <button class="shift-btn" data-shifts="2">2 shifts · 16h</button>
+          <button class="shift-btn" data-shifts="3">3 shifts · 24h</button>
+        </div>
       </div>
+      <div class="footnote" style="margin:-8px 0 14px;">Shift buttons apply to whichever timeline is selected below — Preparation and Post-production (and their sub-tasks) stay exactly as set, only Production adjusts.</div>
 
       <div class="calc-row">
         <div class="calc-field">
@@ -528,10 +535,16 @@ document.getElementById('calc-back').addEventListener('click', ()=> goToView(gan
 // Post-production (and anything else) should stay exactly as set — only
 // the "Production" section/task absorbs the change. Falls back to the
 // generic rebalance if there's no Production item (or it's locked).
-function adjustSectionsTotalPreferProduction(state){
+// Whenever a section's/sub-task's total needs to be reconciled automatically
+// (total changed, something added/removed, a value typed directly) — as
+// opposed to two ADJACENT items being dragged against each other — only the
+// unlocked "Production" section absorbs the difference; everything else
+// stays exactly as set. Falls back to the old proportional spread only if
+// Production itself isn't available (missing, locked, or the one excluded).
+function compensateViaProduction(state, excludeId){
   const prod = findProductionSection(state.sections);
-  if (prod && !prod.locked){
-    const others = state.sections.reduce((s,x)=> x===prod ? s : s+x.duration, 0);
+  if (prod && prod.id!==excludeId && !prod.locked){
+    const others = state.sections.reduce((s,x)=> x.id===prod.id ? s : s+x.duration, 0);
     const newVal = state.total - others;
     if (newVal >= 0){
       prod.duration = newVal;
@@ -539,8 +552,9 @@ function adjustSectionsTotalPreferProduction(state){
       return;
     }
   }
-  rebalance(state, null);
+  rebalance(state, excludeId);
 }
+function adjustSectionsTotalPreferProduction(state){ compensateViaProduction(state, null); }
 // Shift-model changes should only ever resize Production; everything after
 // it must be repositioned, not resized — so this deliberately bypasses the
 // general ripple (which can shrink/grow the immediate neighbor to keep its
@@ -854,8 +868,7 @@ function absorbGanttTotalChange(){
 
 function onSubtaskDurationEdited(parent, subId, newVal, outerRebalanceFn){
   const sub = parent.subtasks.find(s=>s.id===subId);
-  sub.duration = newVal;
-  rebalanceArray(parent.subtasks, parent.duration, subId);
+  sub.duration = Math.max(GANTT_MIN, newVal);
   parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
   outerRebalanceFn();
 }
@@ -872,17 +885,23 @@ function addGanttSubtask(parent){
   return newSub;
 }
 
+// A new sub-task's time comes from the parent's own total growing (which
+// bubbles up to Production via the caller) — existing siblings are never
+// touched by adding one.
 function addSubtask(parent){
   if (parent.subtasks.length===0){
     parent.subtasks.push({ id: uid(), name: parent.name + ' – part 1', duration: parent.duration, locked:false, start: parent.start||0 });
   }
-  const newSub = { id: uid(), name: 'New sub-task', duration: Math.max(0.1, parent.duration/(parent.subtasks.length+1)), locked:false, start: parent.start||0 };
+  const newDur = Math.max(0.1, parent.duration>0 ? parent.duration/(parent.subtasks.length+1) : 0.5);
+  const newSub = { id: uid(), name: 'New sub-task', duration: newDur, locked:false, start: parent.start||0 };
   parent.subtasks.push(newSub);
-  rebalanceArray(parent.subtasks, parent.duration, newSub.id);
+  parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
 }
+// Removing a sub-task shrinks the parent's own total by exactly its
+// duration (which bubbles up); the remaining siblings are never touched.
 function removeSubtask(parent, subId){
   parent.subtasks = parent.subtasks.filter(s=>s.id!==subId);
-  if (parent.subtasks.length>0) rebalanceArray(parent.subtasks, parent.duration, null);
+  parent.duration = parent.subtasks.reduce((s,x)=>s+x.duration,0);
 }
 function fmt(n){ return (Math.round(n*100)/100).toString(); }
 function focusNameField(id){
@@ -921,6 +940,38 @@ function attachStackBoundaryDrag(handle, leftItem, rightItem, leftEl, rightEl, c
       document.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
       onCommit(initLeft, initRight);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+// Dragging a sub-task's own edge resizes only that sub-task — its siblings
+// within the same section stay exactly as set (matching how typing a new
+// duration for it behaves): the parent's total is recomputed and the
+// difference bubbles up to compensate via Production, via onCommit.
+function attachSubtaskEdgeDrag(handle, sub, subEl, containerEl, parentDuration, onCommit){
+  if (sub.locked) return;
+  handle.addEventListener('mousedown', (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    const containerRect = containerEl.getBoundingClientRect();
+    const startX = e.clientX;
+    const initDuration = sub.duration;
+    document.body.style.cursor = 'ew-resize';
+    function onMove(ev){
+      const deltaPx = ev.clientX - startX;
+      const deltaDuration = deltaPx / containerRect.width * parentDuration;
+      let newDuration = initDuration + deltaDuration;
+      newDuration = Math.round(newDuration / GANTT_MIN) * GANTT_MIN;
+      newDuration = Math.max(GANTT_MIN, newDuration);
+      sub.duration = newDuration;
+      subEl.style.flex = newDuration + ' 0 0px';
+    }
+    function onUp(){
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      onCommit();
     }
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -974,7 +1025,11 @@ function renderBarTicksTotal(state, barEl, ticksEl, totalLineEl, onChange){
         const handle = document.createElement('div');
         handle.className = 'seg-boundary';
         subEls[i].appendChild(handle);
-        attachStackBoundaryDrag(handle, sub, sec.subtasks[i+1], subEls[i], subEls[i+1], seg, onChange);
+        attachSubtaskEdgeDrag(handle, sub, subEls[i], seg, sec.duration, ()=>{
+          sec.duration = sec.subtasks.reduce((s,x)=>s+x.duration,0);
+          compensateViaProduction(state, sec.id);
+          onChange();
+        });
       });
       allSubEls.push(subEls);
     } else {
@@ -1077,6 +1132,7 @@ function buildSectionRow(state, sec, onChange, allowSubtasks, refreshVisuals){
     subBtn.addEventListener('click', ()=>{
       addSubtask(sec);
       const newId = sec.subtasks[sec.subtasks.length-1].id;
+      compensateViaProduction(state, sec.id);
       onChange();
       focusNameField(newId);
     });
@@ -1095,7 +1151,7 @@ function buildSectionRow(state, sec, onChange, allowSubtasks, refreshVisuals){
   } else {
     tdDur.appendChild(createTimeField({
       getDec: ()=> sec.duration,
-      setDec: (v)=>{ sec.duration = v; rebalance(state, sec.id); onChange(); },
+      setDec: (v)=>{ sec.duration = v; compensateViaProduction(state, sec.id); onChange(); },
       disabled: sec.locked
     }));
   }
@@ -1115,7 +1171,7 @@ function buildSectionRow(state, sec, onChange, allowSubtasks, refreshVisuals){
   delBtn.textContent = '✕';
   delBtn.addEventListener('click', ()=>{
     state.sections = state.sections.filter(s=>s.id!==sec.id);
-    rebalance(state, null);
+    compensateViaProduction(state, null);
     onChange();
   });
   tdDel.appendChild(delBtn);
@@ -1152,7 +1208,7 @@ function buildSubtaskRow(state, sec, sub, onChange, refreshVisuals){
   const tdDur = document.createElement('td');
   tdDur.appendChild(createTimeField({
     getDec: ()=> sub.duration,
-    setDec: (v)=>{ onSubtaskDurationEdited(sec, sub.id, v, ()=>{ rebalance(state, sec.id); onChange(); }); },
+    setDec: (v)=>{ onSubtaskDurationEdited(sec, sub.id, v, ()=>{ compensateViaProduction(state, sec.id); onChange(); }); },
     disabled: sub.locked
   }));
 
@@ -1169,7 +1225,7 @@ function buildSubtaskRow(state, sec, sub, onChange, refreshVisuals){
   const delBtn = document.createElement('button');
   delBtn.className = 'del-btn';
   delBtn.textContent = '✕';
-  delBtn.addEventListener('click', ()=>{ removeSubtask(sec, sub.id); onChange(); });
+  delBtn.addEventListener('click', ()=>{ removeSubtask(sec, sub.id); compensateViaProduction(state, sec.id); onChange(); });
   tdDel.appendChild(delBtn);
 
   tr.append(tdHandle, tdColor, tdName, tdDur, tdLock, tdDel);
@@ -1219,7 +1275,11 @@ function renderMini(sourceState, mountEl, interactive, onChange){
           const subHandle = document.createElement('div');
           subHandle.className = 'seg-boundary';
           subElsPerSeg[i][j].appendChild(subHandle);
-          attachStackBoundaryDrag(subHandle, sub, sec.subtasks[j+1], subElsPerSeg[i][j], subElsPerSeg[i][j+1], segEls[i], onChange);
+          attachSubtaskEdgeDrag(subHandle, sub, subElsPerSeg[i][j], segEls[i], sec.duration, ()=>{
+            sec.duration = sec.subtasks.reduce((s,x)=>s+x.duration,0);
+            compensateViaProduction(sourceState, sec.id);
+            onChange();
+          });
         });
       }
       if (i===sourceState.sections.length-1) return;
@@ -1291,7 +1351,7 @@ document.getElementById('det-add').addEventListener('click', ()=>{
   det.sections.push(makeSection('New section', 0));
   const added = det.sections[det.sections.length-1];
   added.duration = Math.max(0.1, det.total/8);
-  rebalance(det, added.id);
+  compensateViaProduction(det, added.id);
   renderDet();
 });
 
@@ -1311,16 +1371,19 @@ document.getElementById('opt-add').addEventListener('click', ()=>{
   opt.sections.push(makeSection('New section', 0));
   const added = opt.sections[opt.sections.length-1];
   added.duration = Math.max(0.1, opt.total/8);
-  rebalance(opt, added.id);
+  compensateViaProduction(opt, added.id);
   renderOpt();
 });
 document.getElementById('opt-load').addEventListener('click', ()=>{
   opt.total = det.total;
+  opt.shift = det.shift;
   opt.sections = det.sections.map(s=>{
     const sec = makeSection(s.name, s.duration, s.color, s.locked);
     if (s.subtasks && s.subtasks.length) sec.subtasks = s.subtasks.map(sub=> Object.assign({}, sub, { id: uid() }));
     return sec;
   });
+  document.getElementById('opt-total').value = decToHHMM(opt.total);
+  syncShiftButtons('shift-group-opt', opt);
   renderOpt();
 });
 
@@ -1686,6 +1749,9 @@ function loadIntoGantt(source){
     return task;
   });
   gantt.total = source.total;
+  gantt.shift = source.shift;
+  document.getElementById('g-total').value = decToHHMM(gantt.total);
+  syncShiftButtons('shift-group-gantt', gantt);
   renderGantt();
 }
 document.getElementById('g-add').addEventListener('click', ()=>{
@@ -1698,8 +1764,8 @@ document.getElementById('g-add').addEventListener('click', ()=>{
 document.getElementById('g-load-opt').addEventListener('click', ()=> loadIntoGantt(opt));
 
 // ---------- mount global time fields + wire shift groups ----------
-mountTimeField('det-total-field', ()=>det.total, (v)=>{ det.total=v; rebalance(det,null); renderDet(); }, 'det-total');
-mountTimeField('opt-total-field', ()=>opt.total, (v)=>{ opt.total=v; rebalance(opt,null); renderOpt(); }, 'opt-total');
+mountTimeField('det-total-field', ()=>det.total, (v)=>{ det.total=v; compensateViaProduction(det,null); renderDet(); }, 'det-total');
+mountTimeField('opt-total-field', ()=>opt.total, (v)=>{ opt.total=v; compensateViaProduction(opt,null); renderOpt(); }, 'opt-total');
 mountTimeField('g-total-field', ()=>gantt.total, (v)=>{ gantt.total=v; absorbGanttTotalChange(); renderGantt(); }, 'g-total');
 mountTimeField('calc-time-field', ()=>calc.prodHours, (v)=>{ calc.prodHours=v; applyProductionTimeToSource(v); renderCalc(); }, 'calc-time');
 
@@ -1791,7 +1857,51 @@ document.getElementById('calc-source').addEventListener('change', ()=>{
   calc.source = document.getElementById('calc-source').value;
   refreshCalcDetMini();
   refreshCalcOptMini();
+  syncCalcShiftButtons();
   autoSyncCalc();
+});
+// The Calculator's shift buttons act on whichever timeline is currently
+// selected as the production-time source, using the same "only Production
+// adjusts" rule as the buttons on that timeline's own page.
+function getCalcTargetState(){
+  if (calc.source==='detailed') return det;
+  if (calc.source==='optimized') return opt;
+  if (calc.source==='gantt') return gantt;
+  return null;
+}
+function syncCalcShiftButtons(){
+  const target = getCalcTargetState();
+  document.querySelectorAll('#shift-group-calc .shift-btn').forEach(b=>{
+    b.disabled = !target;
+    b.classList.toggle('active', !!target && parseInt(b.dataset.shifts,10) === (target.shift||1));
+  });
+}
+document.querySelectorAll('#shift-group-calc .shift-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const target = getCalcTargetState();
+    if (!target) return;
+    const shifts = parseInt(btn.dataset.shifts,10);
+    const oldTotal = target.total;
+    target.shift = shifts;
+    target.total = shifts * 8;
+    if (target===gantt){
+      adjustGanttTotalPreferProduction(oldTotal);
+      document.getElementById('g-total').value = decToHHMM(gantt.total);
+      syncShiftButtons('shift-group-gantt', gantt);
+      renderGantt();
+    } else if (target===det){
+      compensateViaProduction(det, null);
+      document.getElementById('det-total').value = decToHHMM(det.total);
+      syncShiftButtons('shift-group-det', det);
+      renderDet();
+    } else {
+      compensateViaProduction(opt, null);
+      document.getElementById('opt-total').value = decToHHMM(opt.total);
+      syncShiftButtons('shift-group-opt', opt);
+      renderOpt();
+    }
+    syncCalcShiftButtons();
+  });
 });
 function renderCalc(){
   const batch = calc.batchSize;
@@ -1863,6 +1973,7 @@ document.getElementById('open-input').addEventListener('change', (e)=>{
       document.getElementById('calc-source').value = calc.source || 'detailed';
       document.getElementById('calc-parallel').value = calc.parallel;
       renderDet(); renderOpt(); renderGantt(); renderCalc();
+      syncCalcShiftButtons();
       goToView(data.currentView && visibleViews().includes(data.currentView) ? data.currentView : 'detailed');
       const status = document.getElementById('io-status');
       status.textContent = 'Loaded ' + file.name;
@@ -1880,6 +1991,7 @@ renderDet();
 renderOpt();
 renderGantt();
 renderCalc();
+syncCalcShiftButtons();
 refreshTabsUI();
 </script>
 </body>
