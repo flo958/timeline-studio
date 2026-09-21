@@ -65,7 +65,7 @@
 
   .mini-label{font-size:11.5px;color:var(--muted-2);margin-bottom:6px;}
   .ministack{display:flex;height:26px;border-radius:6px;overflow:hidden;border:1px solid var(--line);}
-  .ministack .seg{display:flex;align-items:center;justify-content:center;font-size:10.5px;color:rgba(0,0,0,.68);font-weight:600;white-space:nowrap;overflow:hidden;}
+  .ministack .seg{display:flex;align-items:center;justify-content:center;font-size:10.5px;color:rgba(0,0,0,.68);font-weight:600;white-space:nowrap;overflow:hidden;position:relative;}
 
   .mini-gantt{border:1px solid var(--line);border-radius:6px;padding:5px;background:var(--panel);}
   .mini-gantt-lane{position:relative;height:20px;background:var(--panel-2);border-radius:3px;overflow:hidden;margin-bottom:2px;}
@@ -75,10 +75,12 @@
   .stackbar{display:flex;height:56px;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-bottom:6px;}
   .stackbar .seg{display:flex;position:relative;min-width:2px;border-right:1px solid rgba(0,0,0,.12);overflow:hidden;}
   .stackbar .seg:last-child{border-right:none;}
-  .stackbar .seg .subseg, .ministack .seg .subseg{display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:600;color:rgba(0,0,0,.7);text-align:center;padding:0 3px;overflow:hidden;white-space:nowrap;border-right:2px solid rgba(255,255,255,.65);}
+  .stackbar .seg .subseg, .ministack .seg .subseg{display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:600;color:rgba(0,0,0,.7);text-align:center;padding:0 3px;overflow:hidden;white-space:nowrap;border-right:2px solid rgba(255,255,255,.65);position:relative;}
   .stackbar .seg .subseg:last-child, .ministack .seg .subseg:last-child{border-right:none;}
   .stackbar .seg .subseg.subseg-alt, .ministack .seg .subseg.subseg-alt{background:rgba(255,255,255,.18);}
   .stackbar .seg.leaf{align-items:center;justify-content:center;font-size:12px;font-weight:600;color:rgba(0,0,0,.68);text-align:center;padding:0 4px;}
+  .seg-boundary{position:absolute;top:0;bottom:0;right:0;width:8px;cursor:ew-resize;z-index:6;}
+  .seg-boundary:hover{background:rgba(255,255,255,.3);}
 
   .ticks{display:flex;font-family:var(--font-mono);font-size:10.5px;color:var(--muted-2);margin-bottom:16px;}
   .ticks span{border-right:1px solid var(--line);padding-left:4px;flex-shrink:0;}
@@ -159,7 +161,7 @@
   <header>
     <div>
       <h1>Timeline Studio</h1>
-      <p>High level → detail → parallel execution → production & takt time calculator.</p>
+      <p>Detail → parallel execution → production & takt time calculator.</p>
     </div>
     <div class="io-bar">
       <button class="io-btn" id="save-btn">💾 Save</button>
@@ -170,58 +172,23 @@
   </header>
 
   <nav class="tabs">
-    <button class="tab active" data-view="highlevel" data-step="0"><span class="step-num">1</span>High-level</button>
-    <button class="tab locked" data-view="detailed" data-step="1"><span class="step-num">2</span>Detailed</button>
-    <button class="tab locked" data-view="gantt" data-step="2"><span class="step-num">3</span>Gantt</button>
-    <button class="tab locked" data-view="calculator" data-step="3"><span class="step-num">4</span>Calculator</button>
+    <button class="tab active" data-view="detailed" data-step="0"><span class="step-num">1</span>Current status</button>
+    <button class="tab locked" data-view="optimized" data-step="1"><span class="step-num">2</span>Optimized</button>
+    <button class="tab locked" data-view="gantt" data-step="2" style="display:none;"><span class="step-num">3</span>Gantt</button>
+    <button class="tab locked" data-view="calculator" data-step="3"><span class="step-num">3</span>Calculator</button>
   </nav>
+  <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);margin:-10px 0 20px;cursor:pointer;">
+    <input type="checkbox" id="gantt-toggle" class="lock-cb">
+    Also plan parallel execution (Gantt) — optional
+  </label>
 
-  <!-- HIGH LEVEL -->
-  <section class="view active" id="view-highlevel">
+  <!-- CURRENT STATUS -->
+  <section class="view active" id="view-detailed">
     <div class="panel">
       <div class="panel-head">
         <div>
-          <h2>High-level timeline</h2>
-          <div class="sub">Main phases: Preparation, Production, Post-production activities — Production always stays its own block.</div>
-        </div>
-        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
-          <div class="shift-group" id="shift-group-hl">
-            <button class="shift-btn active" data-shifts="1">1 shift · 8h</button>
-            <button class="shift-btn" data-shifts="2">2 shifts · 16h</button>
-            <button class="shift-btn" data-shifts="3">3 shifts · 24h</button>
-          </div>
-          <div class="field-row">
-            <span>Total</span>
-            <span id="hl-total-field"></span>
-          </div>
-        </div>
-      </div>
-      <div id="hl-bar" class="stackbar"></div>
-      <div id="hl-ticks" class="ticks"></div>
-      <div id="hl-total-line" class="total-line"></div>
-      <table>
-        <thead><tr><th style="width:24px;"></th><th style="width:30px;"></th><th>Section</th><th style="width:110px;">Duration</th><th style="width:56px;">Keep</th><th style="width:30px;"></th></tr></thead>
-        <tbody id="hl-tbody"></tbody>
-      </table>
-      <button class="add-btn" id="hl-add">+ Add section</button>
-      <div class="footnote">Drag the ⋮⋮ handle to reorder. Check "Keep" to hold a section's duration fixed. Times use hh:mm, ± steps by 5 minutes.</div>
-      <div class="step-nav">
-        <button class="next-btn" id="hl-next">Continue to detailed →</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- DETAILED -->
-  <section class="view" id="view-detailed">
-    <div class="panel">
-      <div class="mini-label">High-level, for reference</div>
-      <div id="det-mini" class="ministack"></div>
-    </div>
-    <div class="panel">
-      <div class="panel-head">
-        <div>
-          <h2>Detailed timeline</h2>
-          <div class="sub">Break any section into smaller sub-tasks with the ⊕ button — sub-tasks keep the section's color, marked with dividers, for easy comparison with high-level.</div>
+          <h2>Current status timeline</h2>
+          <div class="sub">Break any section into smaller sub-tasks with the ⊕ button — sub-tasks keep the section's color, marked with dividers.</div>
         </div>
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
           <div class="shift-group" id="shift-group-det">
@@ -244,23 +211,64 @@
       </table>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <button class="add-btn" id="det-add">+ Add section</button>
-        <button class="load-btn" id="det-load">Load sections from high-level</button>
       </div>
       <div class="footnote">Drag ⋮⋮ to reorder. ⊕ next to a name adds a sub-task under it. Times use hh:mm, ± steps by 5 minutes.</div>
       <div class="step-nav">
-        <button class="back-btn" id="det-back">← Back to high-level</button>
-        <button class="next-btn" id="det-next">Continue to Gantt →</button>
+        <button class="next-btn" id="det-next">Continue to optimized →</button>
       </div>
     </div>
   </section>
 
-  <!-- GANTT -->
+  <!-- OPTIMIZED -->
+  <section class="view" id="view-optimized">
+    <div class="panel">
+      <div class="mini-label">Current status, for reference</div>
+      <div id="opt-mini-det" class="ministack"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Optimized timeline</h2>
+          <div class="sub">Rework the current status into an improved plan — same tools: ⊕ adds a sub-task, drag ⋮⋮ to reorder.</div>
+        </div>
+        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+          <div class="shift-group" id="shift-group-opt">
+            <button class="shift-btn active" data-shifts="1">1 shift · 8h</button>
+            <button class="shift-btn" data-shifts="2">2 shifts · 16h</button>
+            <button class="shift-btn" data-shifts="3">3 shifts · 24h</button>
+          </div>
+          <div class="field-row">
+            <span>Total</span>
+            <span id="opt-total-field"></span>
+          </div>
+        </div>
+      </div>
+      <div id="opt-bar" class="stackbar"></div>
+      <div id="opt-ticks" class="ticks"></div>
+      <div id="opt-total-line" class="total-line"></div>
+      <table>
+        <thead><tr><th style="width:24px;"></th><th style="width:30px;"></th><th>Section</th><th style="width:110px;">Duration</th><th style="width:56px;">Keep</th><th style="width:30px;"></th></tr></thead>
+        <tbody id="opt-tbody"></tbody>
+      </table>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="add-btn" id="opt-add">+ Add section</button>
+        <button class="load-btn" id="opt-load">Load from current status</button>
+      </div>
+      <div class="footnote">Drag ⋮⋮ to reorder. ⊕ next to a name adds a sub-task under it. Times use hh:mm, ± steps by 5 minutes.</div>
+      <div class="step-nav">
+        <button class="back-btn" id="opt-back">← Back to current status</button>
+        <button class="next-btn" id="opt-next">Continue to calculator →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- GANTT (optional) -->
   <section class="view" id="view-gantt">
     <div class="panel">
-      <div class="mini-label">High-level, for reference</div>
-      <div id="gantt-mini-hl" class="ministack" style="margin-bottom:14px;"></div>
-      <div class="mini-label">Detailed, for reference</div>
-      <div id="gantt-mini-det" class="ministack"></div>
+      <div class="mini-label">Current status, for reference</div>
+      <div id="gantt-mini-det" class="ministack" style="margin-bottom:14px;"></div>
+      <div class="mini-label">Optimized, for reference</div>
+      <div id="gantt-mini-opt" class="ministack"></div>
     </div>
     <div class="panel">
       <div class="panel-head">
@@ -294,12 +302,12 @@
         </table>
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           <button class="add-btn" id="g-add">+ Add task</button>
-          <button class="load-btn" id="g-load-det">Load from detailed</button>
+          <button class="load-btn" id="g-load-opt">Load from optimized</button>
         </div>
         <div class="footnote">Drag ⋮⋮ to reorder. ⊕ adds a sub-task. Check "Keep" to hold a duration fixed. Times use hh:mm, ± steps by 5 minutes.</div>
       </div>
       <div class="step-nav">
-        <button class="back-btn" id="g-back">← Back to detailed</button>
+        <button class="back-btn" id="g-back">← Back to optimized</button>
         <button class="next-btn" id="g-next">Continue to calculator →</button>
       </div>
     </div>
@@ -308,12 +316,14 @@
   <!-- CALCULATOR -->
   <section class="view" id="view-calculator">
     <div class="panel">
-      <div class="mini-label">High-level, for reference</div>
-      <div id="calc-mini-hl" class="ministack" style="margin-bottom:14px;"></div>
-      <div class="mini-label">Detailed, for reference</div>
+      <div class="mini-label">Current status, for reference</div>
       <div id="calc-mini-det" class="ministack" style="margin-bottom:14px;"></div>
-      <div class="mini-label">Gantt, for reference</div>
-      <div id="calc-mini-gantt" class="mini-gantt"></div>
+      <div class="mini-label">Optimized, for reference</div>
+      <div id="calc-mini-opt" class="ministack"></div>
+      <div id="calc-gantt-ref" style="display:none;">
+        <div class="mini-label" style="margin-top:14px;">Gantt, for reference</div>
+        <div id="calc-mini-gantt" class="mini-gantt"></div>
+      </div>
     </div>
     <div class="panel">
       <div class="panel-head">
@@ -331,8 +341,8 @@
         <div class="calc-field">
           <label>Pull production time from</label>
           <select id="calc-source">
-            <option value="highlevel">High-level timeline</option>
-            <option value="detailed">Detailed timeline</option>
+            <option value="detailed">Current status timeline</option>
+            <option value="optimized">Optimized timeline</option>
             <option value="gantt">Gantt</option>
             <option value="manual">Manual entry only</option>
           </select>
@@ -434,7 +444,7 @@ function mountTimeField(mountId, getDec, setDec, inputId){
 }
 
 // ---------- state ----------
-let hl = {
+let det = {
   total: 8, unit: 'h', shift: 1,
   sections: [
     makeSection('Preparation', 2),
@@ -443,7 +453,7 @@ let hl = {
   ]
 };
 
-let det = { total: 8, unit: 'h', shift: 1, sections: [] };
+let opt = { total: 8, unit: 'h', shift: 1, sections: [] };
 
 let gantt = {
   total: 8, unit: 'h', shift: 1,
@@ -456,48 +466,116 @@ let gantt = {
   ]
 };
 
-let calc = { batchSize: 6000, source: 'highlevel', prodHours: 4, parallel: 1 };
+let calc = { batchSize: 6000, source: 'detailed', prodHours: 4, parallel: 1 };
 
-// ---------- stepper ----------
-const STEP_VIEWS = ['highlevel','detailed','gantt','calculator'];
-let maxStepReached = 0;
-let currentStep = 0;
+// ---------- stepper (Gantt is optional and can be toggled in/out) ----------
+const ALL_VIEWS = ['detailed','optimized','gantt','calculator'];
+let ganttEnabled = false;
+let unlockedViews = new Set(['detailed']);
+let currentView = 'detailed';
 
-function goToStep(step){
-  currentStep = step;
+function visibleViews(){
+  return ganttEnabled ? ALL_VIEWS : ALL_VIEWS.filter(v=>v!=='gantt');
+}
+function refreshTabsUI(){
+  const vv = visibleViews();
   document.querySelectorAll('.tab').forEach(b=>{
-    const s = parseInt(b.dataset.step,10);
-    b.classList.toggle('active', s===step);
-    b.classList.toggle('locked', s>maxStepReached);
+    const v = b.dataset.view;
+    if (v==='gantt'){ b.style.display = ganttEnabled ? '' : 'none'; }
+    b.classList.toggle('active', v===currentView);
+    b.classList.toggle('locked', !unlockedViews.has(v));
   });
+  vv.forEach((v,i)=>{
+    const btn = document.querySelector('.tab[data-view="'+v+'"] .step-num');
+    if (btn) btn.textContent = (i+1);
+  });
+  document.getElementById('opt-next').textContent = ganttEnabled ? 'Continue to Gantt →' : 'Continue to calculator →';
+  document.getElementById('calc-back').textContent = ganttEnabled ? '← Back to Gantt' : '← Back to optimized';
+  document.getElementById('calc-gantt-ref').style.display = ganttEnabled ? '' : 'none';
+}
+function goToView(view){
+  currentView = view;
+  refreshTabsUI();
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-  document.getElementById('view-'+STEP_VIEWS[step]).classList.add('active');
+  document.getElementById('view-'+view).classList.add('active');
 }
 document.querySelectorAll('.tab').forEach(btn=>{
   btn.addEventListener('click', ()=>{
-    const s = parseInt(btn.dataset.step,10);
-    if (s > maxStepReached) return;
-    goToStep(s);
+    const v = btn.dataset.view;
+    if (!unlockedViews.has(v)) return;
+    goToView(v);
   });
 });
-document.getElementById('hl-next').addEventListener('click', ()=>{ maxStepReached = Math.max(maxStepReached, 1); goToStep(1); });
-document.getElementById('det-back').addEventListener('click', ()=> goToStep(0));
-document.getElementById('det-next').addEventListener('click', ()=>{ maxStepReached = Math.max(maxStepReached, 2); goToStep(2); });
-document.getElementById('g-back').addEventListener('click', ()=> goToStep(1));
-document.getElementById('g-next').addEventListener('click', ()=>{ maxStepReached = Math.max(maxStepReached, 3); goToStep(3); });
-document.getElementById('calc-back').addEventListener('click', ()=> goToStep(2));
+document.getElementById('gantt-toggle').addEventListener('change', function(){
+  ganttEnabled = this.checked;
+  if (ganttEnabled) unlockedViews.add('gantt');
+  if (!ganttEnabled && currentView==='gantt') { goToView('optimized'); return; }
+  refreshTabsUI();
+});
+document.getElementById('det-next').addEventListener('click', ()=>{ unlockedViews.add('optimized'); goToView('optimized'); });
+document.getElementById('opt-back').addEventListener('click', ()=> goToView('detailed'));
+document.getElementById('opt-next').addEventListener('click', ()=>{
+  const next = ganttEnabled ? 'gantt' : 'calculator';
+  unlockedViews.add(next);
+  goToView(next);
+});
+document.getElementById('g-back').addEventListener('click', ()=> goToView('optimized'));
+document.getElementById('g-next').addEventListener('click', ()=>{ unlockedViews.add('calculator'); goToView('calculator'); });
+document.getElementById('calc-back').addEventListener('click', ()=> goToView(ganttEnabled ? 'gantt' : 'optimized'));
 
 // ---------- shift model ----------
+// When the shift model changes the fixed total, Preparation and
+// Post-production (and anything else) should stay exactly as set — only
+// the "Production" section/task absorbs the change. Falls back to the
+// generic rebalance if there's no Production item (or it's locked).
+function adjustSectionsTotalPreferProduction(state){
+  const prod = findProductionSection(state.sections);
+  if (prod && !prod.locked){
+    const others = state.sections.reduce((s,x)=> x===prod ? s : s+x.duration, 0);
+    const newVal = state.total - others;
+    if (newVal >= 0){
+      prod.duration = newVal;
+      if (prod.subtasks && prod.subtasks.length) rebalanceArray(prod.subtasks, newVal, null);
+      return;
+    }
+  }
+  rebalance(state, null);
+}
+// Shift-model changes should only ever resize Production; everything after
+// it must be repositioned, not resized — so this deliberately bypasses the
+// general ripple (which can shrink/grow the immediate neighbor to keep its
+// end fixed) and instead translates every item at or after Production's old
+// end by the exact same delta, preserving all of their own durations.
+function adjustGanttTotalPreferProduction(oldTotal){
+  const prod = findProductionSection(gantt.tasks);
+  const diff = gantt.total - oldTotal;
+  if (prod && !prod.locked){
+    const chainBefore = getFlatGanttChain();
+    const prodEndBefore = prod.start + prod.duration;
+    const toShift = chainBefore.filter(it => it.ref!==prod && it.ref.start >= prodEndBefore - 1e-9);
+    prod.duration = Math.max(GANTT_MIN, prod.duration + diff);
+    const touchedParents = new Set();
+    toShift.forEach(it=>{
+      if (it.ref.locked) return;
+      it.ref.start = Math.max(0, it.ref.start + diff);
+      if (it.parent) touchedParents.add(it.parent);
+    });
+    touchedParents.forEach(p=> p.duration = p.subtasks.reduce((s,x)=>s+x.duration,0));
+    return;
+  }
+  absorbGanttTotalChange();
+}
 function wireShiftGroup(groupId, state, renderFn){
   const group = document.getElementById(groupId);
   group.querySelectorAll('.shift-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const shifts = parseInt(btn.dataset.shifts,10);
       group.querySelectorAll('.shift-btn').forEach(b=> b.classList.toggle('active', b===btn));
+      const oldTotal = state.total;
       state.shift = shifts;
       state.total = shifts * 8;
-      if (state.sections) rebalance(state, null);
-      if (state.tasks) absorbGanttTotalChange();
+      if (state.sections) adjustSectionsTotalPreferProduction(state);
+      if (state.tasks) adjustGanttTotalPreferProduction(oldTotal);
       renderFn();
     });
   });
@@ -646,9 +724,17 @@ function rippleGanttChainForward(editedRef, startFromRef){
     if (Math.abs(it.ref.start - prevEnd) < 1e-9) break;
     if (it.ref.locked) break;
     const oldEnd = it.ref.start + it.ref.duration;
+    const oldDuration = it.ref.duration;
     let newStart = Math.max(0, prevEnd);
     let newDuration = oldEnd - newStart;
-    if (newDuration < GANTT_MIN){ newDuration = GANTT_MIN; newStart = oldEnd - GANTT_MIN; }
+    if (newDuration < GANTT_MIN){
+      // The gap is too large to close by shrinking this item alone (would
+      // need a negative/near-zero duration) — instead of squashing it,
+      // translate it: keep its own duration exactly as it was, just moved
+      // to start right at the wall. The cascade then continues correctly
+      // from its real new end.
+      newDuration = oldDuration;
+    }
     it.ref.start = newStart;
     it.ref.duration = newDuration;
     prevEnd = it.ref.start + it.ref.duration;
@@ -681,11 +767,14 @@ function rippleGanttChainBackward(editedRef, startFromRef){
     const itEnd = it.ref.start + it.ref.duration;
     if (Math.abs(itEnd - nextStart) < 1e-9) break;
     if (it.ref.locked) break;
+    const oldDuration = it.ref.duration;
     let newDuration = nextStart - it.ref.start;
     if (newDuration < GANTT_MIN){
-      const shortfall = GANTT_MIN - newDuration;
-      it.ref.start = Math.max(0, it.ref.start - shortfall);
-      newDuration = GANTT_MIN;
+      // The gap is too large to close by shrinking this item alone —
+      // translate it instead, keeping its own duration exactly as it was,
+      // just pulled earlier so its end meets the wall.
+      it.ref.start = Math.max(0, nextStart - oldDuration);
+      newDuration = oldDuration;
     }
     it.ref.duration = newDuration;
     nextStart = it.ref.start;
@@ -801,15 +890,76 @@ function focusNameField(id){
   if (el){ el.focus(); el.select(); }
 }
 
+// Drag a boundary between two adjacent duration-bearing items within a
+// container, in 5-minute steps. leftEl/rightEl get their flex-basis updated
+// live for smooth feedback; onCommit runs once, on mouseup.
+function attachStackBoundaryDrag(handle, leftItem, rightItem, leftEl, rightEl, containerEl, onCommit){
+  if (leftItem.locked || rightItem.locked) return;
+  handle.addEventListener('mousedown', (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    const containerRect = containerEl.getBoundingClientRect();
+    const pairTotal = leftItem.duration + rightItem.duration;
+    const startX = e.clientX;
+    const initLeft = leftItem.duration;
+    const initRight = rightItem.duration;
+    document.body.style.cursor = 'ew-resize';
+    function onMove(ev){
+      const deltaPx = ev.clientX - startX;
+      const deltaDuration = deltaPx / containerRect.width * pairTotal;
+      let newLeft = initLeft + deltaDuration;
+      newLeft = Math.round(newLeft / GANTT_MIN) * GANTT_MIN;
+      newLeft = Math.max(GANTT_MIN, Math.min(pairTotal - GANTT_MIN, newLeft));
+      const newRight = pairTotal - newLeft;
+      leftItem.duration = newLeft;
+      rightItem.duration = newRight;
+      leftEl.style.flex = newLeft + ' 0 0px';
+      rightEl.style.flex = newRight + ' 0 0px';
+    }
+    function onUp(){
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      onCommit(initLeft, initRight);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+// When a top-level boundary drag changes a section's total and that section
+// has sub-tasks, only the sub-task actually touching that boundary should
+// absorb the change — not a proportional spread across all of them.
+// Cascades to the next one over only if the edge sub-task hits its minimum.
+function absorbDurationChangeAtEdge(subtasksArr, delta, fromEnd){
+  if (!subtasksArr || subtasksArr.length===0 || Math.abs(delta) < 1e-9) return;
+  const order = fromEnd ? [...subtasksArr].reverse() : subtasksArr;
+  let remaining = delta;
+  for (const sub of order){
+    if (Math.abs(remaining) < 1e-9) break;
+    if (sub.locked) break;
+    const newVal = sub.duration + remaining;
+    if (newVal < GANTT_MIN){
+      remaining = newVal - GANTT_MIN;
+      sub.duration = GANTT_MIN;
+    } else {
+      sub.duration = newVal;
+      remaining = 0;
+    }
+  }
+}
+
 // ---------- render: bar + ticks + total-line only (no table) ----------
-function renderBarTicksTotal(state, barEl, ticksEl, totalLineEl){
+function renderBarTicksTotal(state, barEl, ticksEl, totalLineEl, onChange){
   barEl.innerHTML = '';
+  const segEls = [];
+  const allSubEls = [];
   state.sections.forEach(sec=>{
     const seg = document.createElement('div');
     seg.className = 'seg';
     seg.style.flex = (Math.max(sec.duration,0.0001)) + ' 0 0px';
     seg.style.background = sec.color;
     if (sec.subtasks && sec.subtasks.length>0){
+      const subEls = [];
       sec.subtasks.forEach((sub,i)=>{
         const inner = document.createElement('div');
         inner.className = 'subseg' + (i%2===1 ? ' subseg-alt' : '');
@@ -817,13 +967,45 @@ function renderBarTicksTotal(state, barEl, ticksEl, totalLineEl){
         inner.title = sec.name + ' — ' + sub.name + ' — ' + decToHHMM(sub.duration);
         inner.textContent = sub.name;
         seg.appendChild(inner);
+        subEls.push(inner);
       });
+      sec.subtasks.forEach((sub,i)=>{
+        if (i===sec.subtasks.length-1) return;
+        const handle = document.createElement('div');
+        handle.className = 'seg-boundary';
+        subEls[i].appendChild(handle);
+        attachStackBoundaryDrag(handle, sub, sec.subtasks[i+1], subEls[i], subEls[i+1], seg, onChange);
+      });
+      allSubEls.push(subEls);
     } else {
       seg.classList.add('leaf');
       seg.title = sec.name + ' — ' + decToHHMM(sec.duration);
       seg.textContent = sec.name;
+      allSubEls.push(null);
     }
     barEl.appendChild(seg);
+    segEls.push(seg);
+  });
+  // fit text only after everything is attached to the live DOM, so
+  // clientWidth/scrollWidth reflect the actual rendered layout.
+  state.sections.forEach((sec,i)=>{
+    if (allSubEls[i]){
+      allSubEls[i].forEach(el=> fitBarText(el, 10.5, 6));
+    } else {
+      fitBarText(segEls[i], 12, 7);
+    }
+  });
+  state.sections.forEach((sec,i)=>{
+    if (i===state.sections.length-1) return;
+    const handle = document.createElement('div');
+    handle.className = 'seg-boundary';
+    segEls[i].appendChild(handle);
+    attachStackBoundaryDrag(handle, sec, state.sections[i+1], segEls[i], segEls[i+1], barEl, (initLeft, initRight)=>{
+      const next = state.sections[i+1];
+      if (sec.subtasks && sec.subtasks.length) absorbDurationChangeAtEdge(sec.subtasks, sec.duration - initLeft, true);
+      if (next.subtasks && next.subtasks.length) absorbDurationChangeAtEdge(next.subtasks, next.duration - initRight, false);
+      onChange();
+    });
   });
 
   ticksEl.innerHTML = '';
@@ -850,7 +1032,7 @@ function renderBarTicksTotal(state, barEl, ticksEl, totalLineEl){
 
 function renderStack(state, barEl, ticksEl, totalLineEl, tbodyEl, onChange, allowSubtasks, refreshDownstream){
   function refreshVisuals(){
-    renderBarTicksTotal(state, barEl, ticksEl, totalLineEl);
+    renderBarTicksTotal(state, barEl, ticksEl, totalLineEl, onChange);
     if (refreshDownstream) refreshDownstream();
   }
   refreshVisuals();
@@ -994,14 +1176,18 @@ function buildSubtaskRow(state, sec, sub, onChange, refreshVisuals){
   return tr;
 }
 
-function renderMini(sourceState, mountEl){
+function renderMini(sourceState, mountEl, interactive, onChange){
   mountEl.innerHTML = '';
+  const segEls = [];
+  const subElsPerSeg = [];
   sourceState.sections.forEach(sec=>{
     const seg = document.createElement('div');
     seg.className = 'seg';
     seg.style.flex = (Math.max(sec.duration,0.0001)) + ' 0 0px';
     seg.style.background = sec.color;
+    let mySubEls = null;
     if (sec.subtasks && sec.subtasks.length>0){
+      mySubEls = [];
       sec.subtasks.forEach((sub,i)=>{
         const inner = document.createElement('div');
         inner.className = 'subseg' + (i%2===1 ? ' subseg-alt' : '');
@@ -1009,6 +1195,7 @@ function renderMini(sourceState, mountEl){
         inner.title = sec.name + ' — ' + sub.name + ' — ' + decToHHMM(sub.duration);
         inner.textContent = sub.name;
         seg.appendChild(inner);
+        mySubEls.push(inner);
       });
     } else {
       seg.classList.add('leaf');
@@ -1016,7 +1203,45 @@ function renderMini(sourceState, mountEl){
       seg.textContent = sec.name;
     }
     mountEl.appendChild(seg);
+    segEls.push(seg);
+    subElsPerSeg.push(mySubEls);
   });
+  // fit text only after everything is attached to the live DOM
+  sourceState.sections.forEach((sec,i)=>{
+    if (subElsPerSeg[i]) subElsPerSeg[i].forEach(el=> fitBarText(el, 9.5, 6));
+    else fitBarText(segEls[i], 10.5, 6);
+  });
+  if (interactive && onChange){
+    sourceState.sections.forEach((sec,i)=>{
+      if (subElsPerSeg[i]){
+        sec.subtasks.forEach((sub,j)=>{
+          if (j===sec.subtasks.length-1) return;
+          const subHandle = document.createElement('div');
+          subHandle.className = 'seg-boundary';
+          subElsPerSeg[i][j].appendChild(subHandle);
+          attachStackBoundaryDrag(subHandle, sub, sec.subtasks[j+1], subElsPerSeg[i][j], subElsPerSeg[i][j+1], segEls[i], onChange);
+        });
+      }
+      if (i===sourceState.sections.length-1) return;
+      const handle = document.createElement('div');
+      handle.className = 'seg-boundary';
+      segEls[i].appendChild(handle);
+      attachStackBoundaryDrag(handle, sec, sourceState.sections[i+1], segEls[i], segEls[i+1], mountEl, (initLeft, initRight)=>{
+        const next = sourceState.sections[i+1];
+        if (sec.subtasks && sec.subtasks.length) absorbDurationChangeAtEdge(sec.subtasks, sec.duration - initLeft, true);
+        if (next.subtasks && next.subtasks.length) absorbDurationChangeAtEdge(next.subtasks, next.duration - initRight, false);
+        onChange();
+      });
+    });
+  }
+}
+function refreshCalcDetMini(){
+  const el = document.getElementById('calc-mini-det');
+  if (el) renderMini(det, el, calc.source==='detailed', renderDet);
+}
+function refreshCalcOptMini(){
+  const el = document.getElementById('calc-mini-opt');
+  if (el) renderMini(opt, el, calc.source==='optimized', renderOpt);
 }
 function fitBarText(el, maxSize, minSize){
   let size = maxSize;
@@ -1048,23 +1273,10 @@ function renderMiniGantt(mountEl){
   });
 }
 
-function renderHLDownstream(){
-  renderMini(hl, document.getElementById('det-mini'));
-  renderMini(hl, document.getElementById('gantt-mini-hl'));
-  renderMini(hl, document.getElementById('calc-mini-hl'));
-  autoSyncCalc();
-}
-function renderHL(){
-  renderStack(hl,
-    document.getElementById('hl-bar'), document.getElementById('hl-ticks'),
-    document.getElementById('hl-total-line'), document.getElementById('hl-tbody'),
-    renderHL, false, renderHLDownstream
-  );
-}
-
 function renderDetDownstream(){
+  renderMini(det, document.getElementById('opt-mini-det'));
   renderMini(det, document.getElementById('gantt-mini-det'));
-  renderMini(det, document.getElementById('calc-mini-det'));
+  refreshCalcDetMini();
   autoSyncCalc();
 }
 function renderDet(){
@@ -1075,15 +1287,6 @@ function renderDet(){
   );
 }
 
-document.getElementById('hl-add').addEventListener('click', ()=>{
-  const remaining = Math.max(hl.total - hl.sections.reduce((s,x)=>s+x.duration,0), 0.25);
-  const start = Math.min(remaining, Math.max(0.25, hl.total/6));
-  hl.sections.push(makeSection('New section', 0));
-  const added = hl.sections[hl.sections.length-1];
-  added.duration = start;
-  rebalance(hl, added.id);
-  renderHL();
-});
 document.getElementById('det-add').addEventListener('click', ()=>{
   det.sections.push(makeSection('New section', 0));
   const added = det.sections[det.sections.length-1];
@@ -1091,10 +1294,34 @@ document.getElementById('det-add').addEventListener('click', ()=>{
   rebalance(det, added.id);
   renderDet();
 });
-document.getElementById('det-load').addEventListener('click', ()=>{
-  det.total = hl.total;
-  det.sections = hl.sections.map(s=> makeSection(s.name, s.duration, s.color, s.locked));
-  renderDet();
+
+function renderOptDownstream(){
+  renderMini(opt, document.getElementById('gantt-mini-opt'));
+  refreshCalcOptMini();
+  autoSyncCalc();
+}
+function renderOpt(){
+  renderStack(opt,
+    document.getElementById('opt-bar'), document.getElementById('opt-ticks'),
+    document.getElementById('opt-total-line'), document.getElementById('opt-tbody'),
+    renderOpt, true, renderOptDownstream
+  );
+}
+document.getElementById('opt-add').addEventListener('click', ()=>{
+  opt.sections.push(makeSection('New section', 0));
+  const added = opt.sections[opt.sections.length-1];
+  added.duration = Math.max(0.1, opt.total/8);
+  rebalance(opt, added.id);
+  renderOpt();
+});
+document.getElementById('opt-load').addEventListener('click', ()=>{
+  opt.total = det.total;
+  opt.sections = det.sections.map(s=>{
+    const sec = makeSection(s.name, s.duration, s.color, s.locked);
+    if (s.subtasks && s.subtasks.length) sec.subtasks = s.subtasks.map(sub=> Object.assign({}, sub, { id: uid() }));
+    return sec;
+  });
+  renderOpt();
 });
 
 // ---------- gantt ----------
@@ -1468,16 +1695,16 @@ document.getElementById('g-add').addEventListener('click', ()=>{
   rippleGanttChainForward(newTask);
   renderGantt();
 });
-document.getElementById('g-load-det').addEventListener('click', ()=> loadIntoGantt(det));
+document.getElementById('g-load-opt').addEventListener('click', ()=> loadIntoGantt(opt));
 
 // ---------- mount global time fields + wire shift groups ----------
-mountTimeField('hl-total-field', ()=>hl.total, (v)=>{ hl.total=v; rebalance(hl,null); renderHL(); }, 'hl-total');
 mountTimeField('det-total-field', ()=>det.total, (v)=>{ det.total=v; rebalance(det,null); renderDet(); }, 'det-total');
+mountTimeField('opt-total-field', ()=>opt.total, (v)=>{ opt.total=v; rebalance(opt,null); renderOpt(); }, 'opt-total');
 mountTimeField('g-total-field', ()=>gantt.total, (v)=>{ gantt.total=v; absorbGanttTotalChange(); renderGantt(); }, 'g-total');
-mountTimeField('calc-time-field', ()=>calc.prodHours, (v)=>{ calc.prodHours=v; renderCalc(); }, 'calc-time');
+mountTimeField('calc-time-field', ()=>calc.prodHours, (v)=>{ calc.prodHours=v; applyProductionTimeToSource(v); renderCalc(); }, 'calc-time');
 
-wireShiftGroup('shift-group-hl', hl, ()=>{ document.getElementById('hl-total').value = decToHHMM(hl.total); renderHL(); });
 wireShiftGroup('shift-group-det', det, ()=>{ document.getElementById('det-total').value = decToHHMM(det.total); renderDet(); });
+wireShiftGroup('shift-group-opt', opt, ()=>{ document.getElementById('opt-total').value = decToHHMM(opt.total); renderOpt(); });
 wireShiftGroup('shift-group-gantt', gantt, ()=>{ document.getElementById('g-total').value = decToHHMM(gantt.total); renderGantt(); });
 
 // ---------- calculator ----------
@@ -1494,11 +1721,56 @@ function getProductionHoursGantt(){
   const t = findProductionSection(gantt.tasks);
   return t ? t.duration : null;
 }
+// Manually editing the production time (or dragging its bar) should only
+// ever compensate against the section/task immediately BEFORE it — nothing
+// after Production, and nothing further back than that one neighbor.
+function adjustProductionPrecedingOnly(state, newDuration){
+  const prod = findProductionSection(state.sections);
+  if (!prod || prod.locked) return false;
+  const idx = state.sections.indexOf(prod);
+  const delta = newDuration - prod.duration;
+  prod.duration = Math.max(GANTT_MIN, newDuration);
+  if (prod.subtasks && prod.subtasks.length) rebalanceArray(prod.subtasks, prod.duration, null);
+  if (idx > 0){
+    const prev = state.sections[idx-1];
+    if (!prev.locked){
+      const oldPrevDuration = prev.duration;
+      const newPrevDuration = Math.max(GANTT_MIN, oldPrevDuration - delta);
+      prev.duration = newPrevDuration;
+      if (prev.subtasks && prev.subtasks.length) absorbDurationChangeAtEdge(prev.subtasks, newPrevDuration - oldPrevDuration, true);
+    }
+  }
+  return true;
+}
+function adjustGanttProductionPrecedingOnly(newDuration){
+  const prod = findProductionSection(gantt.tasks);
+  if (!prod || prod.locked) return false;
+  const chain = getFlatGanttChain();
+  const idx = chain.findIndex(it=>it.ref===prod);
+  const delta = newDuration - prod.duration;
+  prod.duration = Math.max(GANTT_MIN, newDuration);
+  if (prod.subtasks && prod.subtasks.length) rebalanceArray(prod.subtasks, prod.duration, null);
+  if (idx > 0){
+    const prevItem = chain[idx-1];
+    if (!prevItem.ref.locked){
+      const newDur = Math.max(GANTT_MIN, prevItem.ref.duration - delta);
+      prevItem.ref.duration = newDur;
+      if (prevItem.parent) prevItem.parent.duration = prevItem.parent.subtasks.reduce((s,x)=>s+x.duration,0);
+    }
+  }
+  syncGanttParent(prod);
+  return true;
+}
+function applyProductionTimeToSource(newHours){
+  if (calc.source==='detailed'){ if (adjustProductionPrecedingOnly(det, newHours)) renderDet(); }
+  else if (calc.source==='optimized'){ if (adjustProductionPrecedingOnly(opt, newHours)) renderOpt(); }
+  else if (calc.source==='gantt'){ if (adjustGanttProductionPrecedingOnly(newHours)) renderGantt(); }
+}
 function autoSyncCalc(){
   if (calc.source === 'manual'){ renderCalc(); return; }
   let hours = null;
-  if (calc.source==='highlevel') hours = getProductionHours(hl);
-  else if (calc.source==='detailed') hours = getProductionHours(det);
+  if (calc.source==='detailed') hours = getProductionHours(det);
+  else if (calc.source==='optimized') hours = getProductionHours(opt);
   else if (calc.source==='gantt') hours = getProductionHoursGantt();
   if (hours!==null){
     calc.prodHours = hours;
@@ -1517,6 +1789,8 @@ document.getElementById('calc-parallel').addEventListener('input', ()=>{
 });
 document.getElementById('calc-source').addEventListener('change', ()=>{
   calc.source = document.getElementById('calc-source').value;
+  refreshCalcDetMini();
+  refreshCalcOptMini();
   autoSyncCalc();
 });
 function renderCalc(){
@@ -1543,9 +1817,9 @@ function renderCalc(){
 // ---------- save / open ----------
 function collectState(){
   return {
-    version: 6, maxStepReached,
-    hl: JSON.parse(JSON.stringify(hl)),
+    version: 8, unlockedViews: Array.from(unlockedViews), currentView, ganttEnabled,
     det: JSON.parse(JSON.stringify(det)),
+    opt: JSON.parse(JSON.stringify(opt)),
     gantt: JSON.parse(JSON.stringify(gantt)),
     calc: JSON.parse(JSON.stringify(calc))
   };
@@ -1572,22 +1846,24 @@ document.getElementById('open-input').addEventListener('change', (e)=>{
   reader.onload = ()=>{
     try{
       const data = JSON.parse(reader.result);
-      hl = data.hl; det = data.det; gantt = data.gantt;
+      det = data.det; opt = data.opt || opt; gantt = data.gantt;
       calc = data.calc || calc;
       if (calc.parallel === undefined) calc.parallel = 1;
-      maxStepReached = data.maxStepReached || 0;
-      syncShiftButtons('shift-group-hl', hl);
+      unlockedViews = new Set(data.unlockedViews || ['detailed']);
+      ganttEnabled = !!data.ganttEnabled;
+      document.getElementById('gantt-toggle').checked = ganttEnabled;
       syncShiftButtons('shift-group-det', det);
+      syncShiftButtons('shift-group-opt', opt);
       syncShiftButtons('shift-group-gantt', gantt);
-      document.getElementById('hl-total').value = decToHHMM(hl.total);
       document.getElementById('det-total').value = decToHHMM(det.total);
+      document.getElementById('opt-total').value = decToHHMM(opt.total);
       document.getElementById('g-total').value = decToHHMM(gantt.total);
       document.getElementById('calc-batch').value = calc.batchSize;
       document.getElementById('calc-time').value = decToHHMM(calc.prodHours);
-      document.getElementById('calc-source').value = calc.source || 'highlevel';
+      document.getElementById('calc-source').value = calc.source || 'detailed';
       document.getElementById('calc-parallel').value = calc.parallel;
-      renderHL(); renderDet(); renderGantt(); renderCalc();
-      goToStep(currentStep);
+      renderDet(); renderOpt(); renderGantt(); renderCalc();
+      goToView(data.currentView && visibleViews().includes(data.currentView) ? data.currentView : 'detailed');
       const status = document.getElementById('io-status');
       status.textContent = 'Loaded ' + file.name;
       setTimeout(()=>{ status.textContent=''; }, 3000);
@@ -1600,10 +1876,11 @@ document.getElementById('open-input').addEventListener('change', (e)=>{
 });
 
 // ---------- init ----------
-renderHL();
 renderDet();
+renderOpt();
 renderGantt();
 renderCalc();
+refreshTabsUI();
 </script>
 </body>
 </html>
