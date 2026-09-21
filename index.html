@@ -159,7 +159,7 @@
   <header>
     <div>
       <h1>Timeline Studio</h1>
-      <p>High level → detail → parallel execution → production calculator → takt time.</p>
+      <p>High level → detail → parallel execution → production & takt time calculator.</p>
     </div>
     <div class="io-bar">
       <button class="io-btn" id="save-btn">💾 Save</button>
@@ -174,7 +174,6 @@
     <button class="tab locked" data-view="detailed" data-step="1"><span class="step-num">2</span>Detailed</button>
     <button class="tab locked" data-view="gantt" data-step="2"><span class="step-num">3</span>Gantt</button>
     <button class="tab locked" data-view="calculator" data-step="3"><span class="step-num">4</span>Calculator</button>
-    <button class="tab locked" data-view="takt" data-step="4"><span class="step-num">5</span>Takt time</button>
   </nav>
 
   <!-- HIGH LEVEL -->
@@ -319,7 +318,7 @@
     <div class="panel">
       <div class="panel-head">
         <div>
-          <h2>Production rate calculator</h2>
+          <h2>Production rate & takt time calculator</h2>
           <div class="sub">Enter the total batch size — the production time syncs automatically from whichever timeline you pick.</div>
         </div>
       </div>
@@ -342,56 +341,21 @@
           <label>Production time (hh:mm)</label>
           <span id="calc-time-field"></span>
         </div>
+        <div class="calc-field">
+          <label>Parallel containers</label>
+          <input type="number" id="calc-parallel" min="1" step="1" value="1">
+        </div>
       </div>
       <div class="footnote">Syncs automatically: it looks for a section or task named "Production" in the chosen timeline and updates whenever that timeline changes. Pick "Manual entry only" to type a time yourself.</div>
 
       <div class="calc-grid">
         <div class="calc-stat"><div class="k">Rate</div><div><span class="v" id="calc-out-permin">–</span><span class="u">units/min</span></div></div>
         <div class="calc-stat"><div class="k">Rate</div><div><span class="v" id="calc-out-perhour">–</span><span class="u">units/h</span></div></div>
-        <div class="calc-stat"><div class="k">Cycle time</div><div><span class="v" id="calc-out-cycle">–</span><span class="u">sec/unit</span></div></div>
+        <div class="calc-stat"><div class="k">Takt time</div><div><span class="v" id="calc-out-takt">–</span><span class="u">per unit, at this parallelism</span></div></div>
       </div>
 
       <div class="step-nav">
         <button class="back-btn" id="calc-back">← Back to Gantt</button>
-        <button class="next-btn" id="calc-next">Continue to takt time →</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- TAKT TIME -->
-  <section class="view" id="view-takt">
-    <div class="panel">
-      <div class="panel-head">
-        <div>
-          <h2>Takt time</h2>
-          <div class="sub">Production time and batch size carry over from the calculator — just set how many containers run in parallel.</div>
-        </div>
-      </div>
-
-      <div class="calc-row">
-        <div class="calc-field">
-          <label>Batch size (units)</label>
-          <input type="number" id="takt-batch" min="1" step="1" value="6000" disabled>
-        </div>
-        <div class="calc-field">
-          <label>Production time (hh:mm)</label>
-          <span id="takt-time-field"></span>
-        </div>
-        <div class="calc-field">
-          <label>Parallel containers</label>
-          <input type="number" id="takt-parallel" min="1" step="1" value="1">
-        </div>
-      </div>
-      <div class="footnote">Batch size and production time are the same values as on the calculator step — change them there.</div>
-
-      <div class="calc-grid">
-        <div class="calc-stat"><div class="k">Takt time</div><div><span class="v" id="takt-out-time">–</span><span class="u" id="takt-out-unit">mm:ss / cycle</span></div></div>
-        <div class="calc-stat"><div class="k">Cycles needed</div><div><span class="v" id="takt-out-cycles">–</span><span class="u">cycles</span></div></div>
-        <div class="calc-stat"><div class="k">Units per cycle</div><div><span class="v" id="takt-out-perCycle">–</span><span class="u">units</span></div></div>
-      </div>
-
-      <div class="step-nav">
-        <button class="back-btn" id="takt-back">← Back to calculator</button>
       </div>
     </div>
   </section>
@@ -492,11 +456,10 @@ let gantt = {
   ]
 };
 
-let calc = { batchSize: 6000, source: 'highlevel', prodHours: 4 };
-let takt = { parallel: 1 };
+let calc = { batchSize: 6000, source: 'highlevel', prodHours: 4, parallel: 1 };
 
 // ---------- stepper ----------
-const STEP_VIEWS = ['highlevel','detailed','gantt','calculator','takt'];
+const STEP_VIEWS = ['highlevel','detailed','gantt','calculator'];
 let maxStepReached = 0;
 let currentStep = 0;
 
@@ -523,8 +486,6 @@ document.getElementById('det-next').addEventListener('click', ()=>{ maxStepReach
 document.getElementById('g-back').addEventListener('click', ()=> goToStep(1));
 document.getElementById('g-next').addEventListener('click', ()=>{ maxStepReached = Math.max(maxStepReached, 3); goToStep(3); });
 document.getElementById('calc-back').addEventListener('click', ()=> goToStep(2));
-document.getElementById('calc-next').addEventListener('click', ()=>{ maxStepReached = Math.max(maxStepReached, 4); goToStep(4); });
-document.getElementById('takt-back').addEventListener('click', ()=> goToStep(3));
 
 // ---------- shift model ----------
 function wireShiftGroup(groupId, state, renderFn){
@@ -1550,6 +1511,10 @@ document.getElementById('calc-batch').addEventListener('input', ()=>{
   calc.batchSize = parseFloat(document.getElementById('calc-batch').value) || 0;
   renderCalc();
 });
+document.getElementById('calc-parallel').addEventListener('input', ()=>{
+  calc.parallel = parseFloat(document.getElementById('calc-parallel').value) || 1;
+  renderCalc();
+});
 document.getElementById('calc-source').addEventListener('change', ()=>{
   calc.source = document.getElementById('calc-source').value;
   autoSyncCalc();
@@ -1558,57 +1523,31 @@ function renderCalc(){
   const batch = calc.batchSize;
   const hours = calc.prodHours;
   const mins = hours*60;
+  const parallel = Math.max(calc.parallel || 1, 1);
   const outMin = document.getElementById('calc-out-permin');
   const outHour = document.getElementById('calc-out-perhour');
-  const outCycle = document.getElementById('calc-out-cycle');
+  const outTakt = document.getElementById('calc-out-takt');
   if (!batch || !mins || mins<=0){
-    outMin.textContent = '–'; outHour.textContent = '–'; outCycle.textContent = '–';
+    outMin.textContent = '–'; outHour.textContent = '–'; outTakt.textContent = '–';
   } else {
     outMin.textContent = fmt(batch/mins);
     outHour.textContent = fmt((batch/mins)*60);
-    outCycle.textContent = fmt((mins*60)/batch);
+    const taktSeconds = (hours*3600*parallel) / batch;
+    outTakt.textContent = formatSeconds(taktSeconds);
   }
-  document.getElementById('takt-batch').value = batch;
-  const taktTimeEl = document.getElementById('takt-time');
-  if (taktTimeEl && document.activeElement !== taktTimeEl) taktTimeEl.value = decToHHMM(hours);
   const calcTimeEl = document.getElementById('calc-time');
   if (calcTimeEl && document.activeElement !== calcTimeEl) calcTimeEl.value = decToHHMM(hours);
-  renderTakt();
 }
 
-// ---------- takt time ----------
-mountTimeField('takt-time-field', ()=>calc.prodHours, (v)=>{ calc.prodHours=v; renderCalc(); }, 'takt-time');
-document.getElementById('takt-parallel').addEventListener('input', ()=>{
-  takt.parallel = parseFloat(document.getElementById('takt-parallel').value) || 1;
-  renderTakt();
-});
-function renderTakt(){
-  const batch = calc.batchSize;
-  const hours = calc.prodHours;
-  const parallel = Math.max(takt.parallel || 1, 1);
-  const outTime = document.getElementById('takt-out-time');
-  const outCycles = document.getElementById('takt-out-cycles');
-  const outPerCycle = document.getElementById('takt-out-perCycle');
-  if (!batch || !hours){
-    outTime.textContent = '–'; outCycles.textContent = '–'; outPerCycle.textContent = '–';
-    return;
-  }
-  const cycles = batch / parallel;
-  const taktSeconds = (hours*3600) / cycles;
-  outTime.textContent = formatSeconds(taktSeconds);
-  outCycles.textContent = fmt(Math.ceil(cycles));
-  outPerCycle.textContent = fmt(parallel);
-}
 
 // ---------- save / open ----------
 function collectState(){
   return {
-    version: 5, maxStepReached,
+    version: 6, maxStepReached,
     hl: JSON.parse(JSON.stringify(hl)),
     det: JSON.parse(JSON.stringify(det)),
     gantt: JSON.parse(JSON.stringify(gantt)),
-    calc: JSON.parse(JSON.stringify(calc)),
-    takt: JSON.parse(JSON.stringify(takt))
+    calc: JSON.parse(JSON.stringify(calc))
   };
 }
 document.getElementById('save-btn').addEventListener('click', ()=>{
@@ -1635,7 +1574,7 @@ document.getElementById('open-input').addEventListener('change', (e)=>{
       const data = JSON.parse(reader.result);
       hl = data.hl; det = data.det; gantt = data.gantt;
       calc = data.calc || calc;
-      takt = data.takt || takt;
+      if (calc.parallel === undefined) calc.parallel = 1;
       maxStepReached = data.maxStepReached || 0;
       syncShiftButtons('shift-group-hl', hl);
       syncShiftButtons('shift-group-det', det);
@@ -1646,7 +1585,7 @@ document.getElementById('open-input').addEventListener('change', (e)=>{
       document.getElementById('calc-batch').value = calc.batchSize;
       document.getElementById('calc-time').value = decToHHMM(calc.prodHours);
       document.getElementById('calc-source').value = calc.source || 'highlevel';
-      document.getElementById('takt-parallel').value = takt.parallel || 1;
+      document.getElementById('calc-parallel').value = calc.parallel;
       renderHL(); renderDet(); renderGantt(); renderCalc();
       goToStep(currentStep);
       const status = document.getElementById('io-status');
