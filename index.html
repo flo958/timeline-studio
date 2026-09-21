@@ -945,6 +945,49 @@ function attachStackBoundaryDrag(handle, leftItem, rightItem, leftEl, rightEl, c
     document.addEventListener('mouseup', onUp);
   });
 }
+// A top-level boundary between two SECTIONS behaves differently from one
+// between two sub-tasks of the same section: the section whose edge isn't
+// Production stays exactly constant (including its own sub-tasks), and
+// 100% of the change is redirected onto Production's own duration —
+// consistent with every other automatic/indirect adjustment in the app.
+function attachTopLevelBoundaryDrag(handle, secLeft, secRight, leftEl, rightEl, containerEl, state, onChange){
+  const prod = findProductionSection(state.sections);
+  if (!prod || prod.locked) return;
+  const prodIsLeft = (prod === secLeft);
+  const prodIsRight = (prod === secRight);
+  if (!prodIsLeft && !prodIsRight) return;
+  const anchor = prodIsLeft ? secRight : secLeft;
+  if (anchor.locked) return;
+  const prodEl = prodIsLeft ? leftEl : rightEl;
+  handle.addEventListener('mousedown', (e)=>{
+    e.preventDefault();
+    e.stopPropagation();
+    const containerRect = containerEl.getBoundingClientRect();
+    const pairTotal = secLeft.duration + secRight.duration;
+    const startX = e.clientX;
+    const initProdDuration = prod.duration;
+    document.body.style.cursor = 'ew-resize';
+    function onMove(ev){
+      const deltaPx = ev.clientX - startX;
+      const deltaDuration = deltaPx / containerRect.width * pairTotal;
+      const sign = prodIsLeft ? 1 : -1;
+      let newProdDuration = initProdDuration + sign*deltaDuration;
+      newProdDuration = Math.round(newProdDuration / GANTT_MIN) * GANTT_MIN;
+      newProdDuration = Math.max(GANTT_MIN, newProdDuration);
+      prod.duration = newProdDuration;
+      prodEl.style.flex = newProdDuration + ' 0 0px';
+    }
+    function onUp(){
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      if (prod.subtasks && prod.subtasks.length) rebalanceArray(prod.subtasks, prod.duration, null);
+      onChange();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
 // Dragging a sub-task's own edge resizes only that sub-task — its siblings
 // within the same section stay exactly as set (matching how typing a new
 // duration for it behaves): the parent's total is recomputed and the
