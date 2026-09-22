@@ -81,6 +81,9 @@
   .stackbar .seg .subseg.subseg-alt, .ministack .seg .subseg.subseg-alt{background:rgba(255,255,255,.18);}
   .stackbar .seg.leaf{align-items:center;justify-content:center;font-size:12px;font-weight:600;color:rgba(0,0,0,.68);text-align:center;padding:0 4px;}
   .seg-boundary{position:absolute;top:0;bottom:0;right:0;width:8px;cursor:ew-resize;z-index:6;}
+  .seg-boundary-r{position:absolute;top:0;bottom:0;right:0;width:5px;cursor:ew-resize;z-index:6;}
+  .seg-boundary-l{position:absolute;top:0;bottom:0;left:0;width:5px;cursor:ew-resize;z-index:6;}
+  .seg-boundary-r:hover, .seg-boundary-l:hover{background:rgba(255,255,255,.3);}
   .seg-boundary:hover{background:rgba(255,255,255,.3);}
 
   .ticks{display:flex;font-family:var(--font-mono);font-size:10.5px;color:var(--muted-2);margin-bottom:16px;}
@@ -989,11 +992,18 @@ function attachTopLevelBoundaryDrag(handle, secLeft, secRight, leftEl, rightEl, 
   });
 }
 // Dragging a sub-task's own edge resizes only that sub-task — its siblings
-// within the same section stay exactly as set (matching how typing a new
-// duration for it behaves): the parent's total is recomputed and the
-// difference bubbles up to compensate via Production, via onCommit.
-function attachSubtaskEdgeDrag(handle, sub, subEl, containerEl, parentDuration, onCommit){
+// Dragging a sub-task's own edge resizes only that sub-task — its sibling
+// on the other side of the boundary stays exactly as set (matching how
+// typing a new duration for it behaves): the parent's total is recomputed
+// and the difference bubbles up to compensate via Production, via onCommit.
+// edge='right' is the sub-task's own right edge (dragging right grows it);
+// edge='left' is its own left edge (dragging left grows it) — this lets a
+// single shared boundary offer two independent handles, one per neighbor,
+// so every sub-task (including the very first and last) is individually
+// resizable without its sibling ever moving.
+function attachSubtaskEdgeDrag(handle, sub, subEl, containerEl, sec, edge, onCommit){
   if (sub.locked) return;
+  const sign = edge==='left' ? -1 : 1;
   handle.addEventListener('mousedown', (e)=>{
     e.preventDefault();
     e.stopPropagation();
@@ -1003,7 +1013,7 @@ function attachSubtaskEdgeDrag(handle, sub, subEl, containerEl, parentDuration, 
     document.body.style.cursor = 'ew-resize';
     function onMove(ev){
       const deltaPx = ev.clientX - startX;
-      const deltaDuration = deltaPx / containerRect.width * parentDuration;
+      const deltaDuration = sign * deltaPx / containerRect.width * sec.duration;
       let newDuration = initDuration + deltaDuration;
       newDuration = Math.round(newDuration / GANTT_MIN) * GANTT_MIN;
       newDuration = Math.max(GANTT_MIN, newDuration);
@@ -1063,17 +1073,6 @@ function renderBarTicksTotal(state, barEl, ticksEl, totalLineEl, onChange){
         seg.appendChild(inner);
         subEls.push(inner);
       });
-      sec.subtasks.forEach((sub,i)=>{
-        if (i===sec.subtasks.length-1) return;
-        const handle = document.createElement('div');
-        handle.className = 'seg-boundary';
-        subEls[i].appendChild(handle);
-        attachSubtaskEdgeDrag(handle, sub, subEls[i], seg, sec.duration, ()=>{
-          sec.duration = sec.subtasks.reduce((s,x)=>s+x.duration,0);
-          compensateViaProduction(state, sec.id);
-          onChange();
-        });
-      });
       allSubEls.push(subEls);
     } else {
       seg.classList.add('leaf');
@@ -1092,6 +1091,33 @@ function renderBarTicksTotal(state, barEl, ticksEl, totalLineEl, onChange){
     } else {
       fitBarText(segEls[i], 12, 7);
     }
+  });
+  // Wire sub-task-internal drag handles: each shared boundary offers two
+  // independent handles side by side — one for the sub-task on its left
+  // (drag its own right edge), one for the sub-task on its right (drag its
+  // own left edge). Each changes only that one sub-task; the sibling on
+  // the other side of the boundary is never touched; Production
+  // compensates. This gives every sub-task, including the very first and
+  // last, its own working handle.
+  state.sections.forEach((sec,i)=>{
+    if (!allSubEls[i]) return;
+    const subEls = allSubEls[i];
+    const commit = ()=>{
+      sec.duration = sec.subtasks.reduce((s,x)=>s+x.duration,0);
+      compensateViaProduction(state, sec.id);
+      onChange();
+    };
+    sec.subtasks.forEach((sub,j)=>{
+      if (j===sec.subtasks.length-1) return;
+      const rHandle = document.createElement('div');
+      rHandle.className = 'seg-boundary-r';
+      subEls[j].appendChild(rHandle);
+      attachSubtaskEdgeDrag(rHandle, sub, subEls[j], segEls[i], sec, 'right', commit);
+      const lHandle = document.createElement('div');
+      lHandle.className = 'seg-boundary-l';
+      subEls[j+1].appendChild(lHandle);
+      attachSubtaskEdgeDrag(lHandle, sec.subtasks[j+1], subEls[j+1], segEls[i], sec, 'left', commit);
+    });
   });
   state.sections.forEach((sec,i)=>{
     if (i===state.sections.length-1) return;
@@ -1185,18 +1211,19 @@ function buildSectionRow(state, sec, onChange, allowSubtasks, refreshVisuals){
 
   const tdDur = document.createElement('td');
   const hasSubs = sec.subtasks && sec.subtasks.length>0;
+  tdDur.appendChild(createTimeField({
+    getDec: ()=> sec.duration,
+    setDec: (v)=>{
+      const oldVal = sec.duration;
+      sec.duration = v;
+      if (hasSubs) absorbDurationChangeAtEdge(sec.subtasks, v - oldVal, true);
+      compensateViaProduction(state, sec.id);
+      onChange();
+    },
+    disabled: sec.locked
+  }));
   if (hasSubs){
-    const span = document.createElement('span');
-    span.className = 'time-static';
-    span.textContent = decToHHMM(sec.duration);
-    span.title = 'Sum of sub-tasks';
-    tdDur.appendChild(span);
-  } else {
-    tdDur.appendChild(createTimeField({
-      getDec: ()=> sec.duration,
-      setDec: (v)=>{ sec.duration = v; compensateViaProduction(state, sec.id); onChange(); },
-      disabled: sec.locked
-    }));
+    tdDur.title = 'Editing this changes the last sub-task; edit a specific sub-task row for finer control.';
   }
 
   const tdLock = document.createElement('td');
@@ -1313,16 +1340,21 @@ function renderMini(sourceState, mountEl, interactive, onChange){
   if (interactive && onChange){
     sourceState.sections.forEach((sec,i)=>{
       if (subElsPerSeg[i]){
+        const commit = ()=>{
+          sec.duration = sec.subtasks.reduce((s,x)=>s+x.duration,0);
+          compensateViaProduction(sourceState, sec.id);
+          onChange();
+        };
         sec.subtasks.forEach((sub,j)=>{
           if (j===sec.subtasks.length-1) return;
-          const subHandle = document.createElement('div');
-          subHandle.className = 'seg-boundary';
-          subElsPerSeg[i][j].appendChild(subHandle);
-          attachSubtaskEdgeDrag(subHandle, sub, subElsPerSeg[i][j], segEls[i], sec.duration, ()=>{
-            sec.duration = sec.subtasks.reduce((s,x)=>s+x.duration,0);
-            compensateViaProduction(sourceState, sec.id);
-            onChange();
-          });
+          const rHandle = document.createElement('div');
+          rHandle.className = 'seg-boundary-r';
+          subElsPerSeg[i][j].appendChild(rHandle);
+          attachSubtaskEdgeDrag(rHandle, sub, subElsPerSeg[i][j], segEls[i], sec, 'right', commit);
+          const lHandle = document.createElement('div');
+          lHandle.className = 'seg-boundary-l';
+          subElsPerSeg[i][j+1].appendChild(lHandle);
+          attachSubtaskEdgeDrag(lHandle, sec.subtasks[j+1], subElsPerSeg[i][j+1], segEls[i], sec, 'left', commit);
         });
       }
       if (i===sourceState.sections.length-1) return;
